@@ -62,6 +62,12 @@ export class DemicalFormat {
         if (s_.match(/(^[0-9]+$)|(^[0-9]+\.[0-9]*$)/) === null) {
             return null;
         }
+
+        // Second digit check when the first digit is 0, we do not accept 00... but we accept 0x
+        if (s_.length >= 2 && s_[0] === '0' && s_[1] === '0') {
+            return null;
+        }
+
         let s = formatNumeric(s_);
 
         let demical = s.length - 1 - s.indexOf('.');

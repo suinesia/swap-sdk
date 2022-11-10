@@ -219,6 +219,7 @@ export class SuiswapClient extends Client {
                 yTokenType: { network: "sui", name: poolTemplateType.typeArgs[1] },
             };
             const fields = (details.data as SuiMoveObject).fields;
+
             const poolInfo = new PoolInfo({
                 type: poolType,
                 typeString: typeString,
@@ -233,11 +234,16 @@ export class SuiswapClient extends Client {
 
                 feeDirection: "X",
 
+                stableAmp: BigIntConstants.ZERO, // TODO: SUI
+                stableXScale: BigIntConstants.ZERO, // TODO: SUI
+                stableYScale: BigIntConstants.ZERO, // TODO: SUI
+
                 freeze: fields.freeze,
+                lastTradeTime: 0, // TODO
 
                 totalTradeX: BigIntConstants.ZERO,
                 totalTradeY: BigIntConstants.ZERO,
-                totalTrade24hLastCaptureTime: BigIntConstants.ZERO,
+                totalTrade24hLastCaptureTime: 0,
                 totalTradeX24h: BigIntConstants.ZERO,
                 totalTradeY24h: BigIntConstants.ZERO,
 
@@ -249,6 +255,7 @@ export class SuiswapClient extends Client {
                 connectFee: BigIntConstants.ZERO,
                 withdrawFee: BigIntConstants.ZERO
             });
+
             return poolInfo;
         } catch (_e) {
             return null;
@@ -613,11 +620,17 @@ export class AptoswapClient extends Client {
 
                 feeDirection: (Number(data.fee_direction) === 200) ? "X" : "Y",
 
+                stableAmp: BigInt(data.stable_amp), 
+                stableXScale: BigInt(data.stable_x_scale),
+                stableYScale: BigInt(data.stable_y_scale),
+
                 freeze: data.freeze,
+
+                lastTradeTime: Number(data.last_trade_time ?? 0),
 
                 totalTradeX: BigInt(data.total_trade_x),
                 totalTradeY: BigInt(data.total_trade_y),
-                totalTrade24hLastCaptureTime: BigInt(data.total_trade_24h_last_capture_time),
+                totalTrade24hLastCaptureTime: Number(data.total_trade_24h_last_capture_time),
                 totalTradeX24h: BigInt(data.total_trade_x_24h),
                 totalTradeY24h: BigInt(data.total_trade_y_24h),
 

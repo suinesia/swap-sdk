@@ -2,8 +2,6 @@ import { CoinType, NetworkType } from "./common";
 
 export class BigIntConstants {
     static ZERO = BigInt(0);
-    static ONE = BigInt(1);
-    static TWO = BigInt(2);
 
     static _1E0 = BigInt(1);
     static _1E1 = BigInt(10 ** 1);
@@ -15,6 +13,13 @@ export class BigIntConstants {
     static _1E7 = BigInt(10 ** 7);
     static _1E8 = BigInt(10 ** 8);
     static _1E9 = BigInt(10 ** 9);
+
+    static FOUR = BigInt(4);
+    static THREE = BigInt(3);
+    static TWO = BigInt(2);
+    static ONE = BigInt(1);
+
+    static MINUS_ONE = BigInt(-1);
 }
 
 export class UiConstants {

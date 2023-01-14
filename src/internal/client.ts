@@ -808,11 +808,15 @@ export class AptoswapClient extends Client {
                     inAmount = BigInt(swapTokenEvent.data.in_amount);
                     outAmount = BigInt(swapTokenEvent.data.out_amount);
                 }
+
+                const href = this.getExplorerHrefForTxHash(r.hash);
+
                 return {
                     type: "swap",
                     id: r.hash,
                     timestamp: Number(r.timestamp) / 1e6,
                     success: success,
+                    href: href,
                     data: {
                         poolType,
                         direction,
@@ -835,12 +839,15 @@ export class AptoswapClient extends Client {
                 };
                 let inAmountX = BigInt(payload.arguments[0]);
                 let inAmountY = BigInt(payload.arguments[1]);
+
+                const href = this.getExplorerHrefForTxHash(r.hash);
                 
                 return {
                     type: "deposit",
                     id: r.hash,
                     timestamp: Number(r.timestamp) / 1e6,
                     success: success,
+                    href: href,
                     data: {
                         poolType,
                         inAmountX,
@@ -868,11 +875,15 @@ export class AptoswapClient extends Client {
                     outAmountX = BigInt(liqudityEvent.data.x_amount);
                     outAmountY = BigInt(liqudityEvent.data.y_amount);
                 }      
+
+                const href = this.getExplorerHrefForTxHash(r.hash);
+
                 return {
                     type: "withdraw",
                     id: r.hash,
                     timestamp: Number(r.timestamp) / 1e6,
                     success: success,
+                    href: href,
                     data: {
                         poolType,
                         outAmountX,
@@ -895,7 +906,11 @@ export class AptoswapClient extends Client {
     }
 
     getPrimaryCoinPrice: () => Promise<number> = async () => {
-        return (38.535 + Math.random() * 0.03) / (10 ** 8);
+        // return (38.535 + Math.random() * 0.03) / (10 ** 8);
+        const res = await axios.get("https://api.coingecko.com/api/v3/simple/price?ids=aptos&vs_currencies=usd");
+        const priceUi = Number(res.data.aptos?.usd);
+        const price = priceUi;
+        return price;
     }
 
     generateTransactionType = async (opt: TransactionOperation.Any, ctx: AptoswapClientTransactionContext) => {

@@ -250,7 +250,7 @@ export class SuiSerializer {
         if (tag === "address" || tag === "string") {    
             return value.toString();
         }
-        else if ("u8" || "u16" || "u32") {
+        else if (tag === "u8" || tag === "u16" || tag === "u32") {
             return Number(value);
         }
         else if (tag === "u64" || tag === "u128") {

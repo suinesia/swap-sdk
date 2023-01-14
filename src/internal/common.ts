@@ -116,30 +116,6 @@ export interface CoinInfo {
     balance: bigint;
 }
 
-export interface CoinUiInfoExtension {
-    stableCoin?: "usdc" | "usdt" | "dai" | "busd" | "other";
-}
-
-export interface CoinUiInfoWithoutId {
-    /// The description of the token
-    symbol: string;
-    /// The name of the token
-    name?: string;
-    /// The demical of the token
-    demical?: number;
-    /// The supply of the token
-    supply?: number;
-    /// The logo url of the token, should be fit to the <Link> in next.js
-    logoUrl?: string;
-    /// Extensions
-    extensions?: CoinUiInfoExtension;
-}
-
-export interface CoinUiInfo extends CoinUiInfoWithoutId {
-    /// The id of the token
-    id: string;
-}
-
 export const isSameCoin = (a: CoinInfo, b: CoinInfo) => {
     // Note: For sui ecosystem, we only need to check address For aptos, since all the addr are equal for single account, we need to check the reset.
     return isSameCoinType(a.type, b.type) && (a.addr === b.addr) && (a.balance === b.balance);
@@ -166,8 +142,6 @@ export interface PoolType {
 export const getPoolTypeUuid = (p: PoolType) => {
     return `PoolType[${getCoinTypeUuid(p.xTokenType)}-${getCoinTypeUuid(p.yTokenType)}]`
 }
-
-
 
 export class WeeklyStandardMovingAverage {
     start_time: number;
@@ -560,6 +534,50 @@ export class PoolInfo {
         return this._volumeToValue(client, primaryCoinPrice, Number(this.totalTradeX), Number(this.totalTradeY), xCoinUi, yCoinUi);
     }
 
+    _volumeToValue = (client: Client, primaryCoinPrice: number, tx: number, ty: number, xCoinUi: CoinUiInfo, yCoinUi: CoinUiInfo) => {
+        const xDecimal = xCoinUi.demical ?? 0;
+        const yDecimal = yCoinUi.demical ?? 0;
+
+        const price = this.getPrice(xDecimal, yDecimal);
+        if (price === 0.0) {
+            return null;
+        }
+
+        const primaryCoinType = client.getPrimaryCoinType();
+
+        // Normalize tx and ty from absolute space to visual space
+        tx = tx / (10 ** xDecimal);
+        ty = ty / (10 ** yDecimal);
+
+        let px: number | null = null;
+        let py: number | null = null;
+
+        if (isSameCoinType(primaryCoinType, this.type.xTokenType)) {
+            px = primaryCoinPrice;
+        } else if (xCoinUi.extensions?.stableCoin !== undefined) {
+            px = 1.0;
+        }
+
+        if (isSameCoinType(primaryCoinType, this.type.yTokenType)) {
+            py = primaryCoinPrice;
+        } else if (yCoinUi.extensions?.stableCoin !== undefined) {
+            py = 1.0;
+        }
+
+        if (px !== null && py === null) {
+            py = px / price;
+        }
+        else if (px === null && py !== null) {
+            px = py * price;
+        }
+
+        if (px !== null && py !== null) {
+            return px * tx + py * ty;
+        }
+
+        return null;
+    }
+
     getApr = () => {
         const startTime = this.totalTrade24hLastCaptureTime;
         const endTime = this.lastTradeTime;
@@ -687,50 +705,6 @@ export class PoolInfo {
         return dy_ / y_scale;
     }
 
-    _volumeToValue = (client: Client, primaryCoinPrice: number, tx: number, ty: number, xCoinUi: CoinUiInfo, yCoinUi: CoinUiInfo) => {
-        const xDecimal = xCoinUi.demical ?? 0;
-        const yDecimal = yCoinUi.demical ?? 0;
-
-        const price = this.getPrice(xDecimal, yDecimal);
-        if (price === 0.0) {
-            return null;
-        }
-
-        const primaryCoinType = client.getPrimaryCoinType();
-
-        // Normalize tx and ty from absolute space to visual space
-        tx = tx / (10 ** xDecimal);
-        ty = ty / (10 ** yDecimal);
-
-        let px: number | null = null;
-        let py: number | null = null;
-
-        if (isSameCoinType(primaryCoinType, this.type.xTokenType)) {
-            px = primaryCoinPrice;
-        } else if (xCoinUi.extensions?.stableCoin !== undefined) {
-            px = 1.0;
-        }
-
-        if (isSameCoinType(primaryCoinType, this.type.yTokenType)) {
-            py = primaryCoinPrice;
-        } else if (yCoinUi.extensions?.stableCoin !== undefined) {
-            py = 1.0;
-        }
-
-        if (px !== null && py === null) {
-            py = px / price;
-        }
-        else if (px === null && py !== null) {
-            px = py * price;
-        }
-
-        if (px !== null && py !== null) {
-            return px * tx + py * ty;
-        }
-
-        return null;
-    }
-
     getUuid: () => string = () => {
         return `PoolInfo[${getPoolTypeUuid(this.type)}-${this.addr}]`;
     }
@@ -742,6 +716,7 @@ export const isSamePool = (a: PoolInfo, b: PoolInfo) => {
 
 export interface CommonTransaction {
     id: string;
+    href: string;
     type: "swap" | "deposit" | "withdraw";
     success: boolean;
     data: SwapTransactionData | DepositTransactionData   | WithdrawTransactionData;
@@ -765,4 +740,28 @@ export interface WithdrawTransactionData {
     poolType: PoolType;
     outAmountX?: bigint;
     outAmountY?: bigint;
+}
+
+export interface CoinUiInfoExtension {
+    stableCoin?: "usdc" | "usdt" | "dai" | "busd" | "other";
+}
+
+export interface CoinUiInfoWithoutId {
+    /// The description of the token
+    symbol: string;
+    /// The name of the token
+    name?: string;
+    /// The demical of the token
+    demical?: number;
+    /// The supply of the token
+    supply?: number;
+    /// The logo url of the token, should be fit to the <Link> in next.js
+    logoUrl?: string;
+    /// Extensions
+    extensions?: CoinUiInfoExtension;
+}
+
+export interface CoinUiInfo extends CoinUiInfoWithoutId {
+    /// The id of the token
+    id: string;
 }

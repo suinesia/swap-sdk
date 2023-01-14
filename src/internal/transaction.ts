@@ -206,8 +206,8 @@ export class SuiSerializer {
     static _normalizArgument = (v: TransacationArgument, ctx: TransactionTypeSerializeContext) => {
         if (SuiSerializer._SERIALIZE_TRANSACTION_HAS_PREPARED === false) {
             SuiSerializer._SERIALIZE_TRANSACTION_HAS_PREPARED = true;
-            if (!SuiBCS.hasType(SuiBCS.ADDRESS)) {
-                SuiBCS.registerAddressType(SuiBCS.ADDRESS, 20);
+            if (!SuiBCS.hasType(Object.getPrototypeOf(SuiBCS) .ADDRESS)) {
+                SuiBCS.registerAddressType(Object.getPrototypeOf(SuiBCS).ADDRESS, 20);
             }
         }
         return normalizeArgument(v, ctx)
@@ -219,25 +219,25 @@ export class SuiSerializer {
         const tag = vs[0];
         const value = vs[1] as (string | number | bigint);
         if (tag === "address") {    
-            return SuiBCS.ser(SuiBCS.ADDRESS, value.toString()).toBytes();
+            return SuiBCS.ser(Object.getPrototypeOf(SuiBCS).ADDRESS, value.toString()).toBytes();
         }
         else if (tag === "string") {
-            return SuiBCS.ser(SuiBCS.STRING, value.toString()).toBytes();
+            return SuiBCS.ser(Object.getPrototypeOf(SuiBCS).STRING, value.toString()).toBytes();
         }
         else if (tag === "u8") {
-            return SuiBCS.ser(SuiBCS.U8, value).toBytes();
+            return SuiBCS.ser(Object.getPrototypeOf(SuiBCS).U8, value).toBytes();
         }
         else if (tag === "u16") {
             throw Error("Sui doesn't support u16 type bcs serialization");
         }
         else if (tag === "u32") {
-            return SuiBCS.ser(SuiBCS.U32, value).toBytes();
+            return SuiBCS.ser(Object.getPrototypeOf(SuiBCS).U32, value).toBytes();
         }
         else if (tag === "u64") {
-            return SuiBCS.ser(SuiBCS.U64, value).toBytes();
+            return SuiBCS.ser(Object.getPrototypeOf(SuiBCS).U64, value).toBytes();
         }
         else if (tag === "u128") {
-            return SuiBCS.ser(SuiBCS.U128, value).toBytes();
+            return SuiBCS.ser(Object.getPrototypeOf(SuiBCS).U128, value).toBytes();
         }
         throw Error(`[SuiSerializer] BCS serialize error on argument: ${v}`)
     }

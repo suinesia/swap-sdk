@@ -765,3 +765,17 @@ export interface CoinUiInfo extends CoinUiInfoWithoutId {
     /// The id of the token
     id: string;
 }
+
+export type GetCoinUiFn = (coin: CoinType) => CoinUiInfo;
+
+export const getCoinUiDemicalStep = (coinUiInfo: CoinUiInfo) => {
+    if (coinUiInfo.demical === undefined || coinUiInfo.demical === null) {
+        return undefined;
+    }
+
+    if (coinUiInfo.demical <= 0) {
+        return "1";
+    }
+
+    return "0." + "0".repeat(coinUiInfo.demical - 1) + "1";
+}

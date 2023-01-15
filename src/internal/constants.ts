@@ -22,11 +22,6 @@ export class BigIntConstants {
     static MINUS_ONE = BigInt(-1);
 }
 
-export class UiConstants {
-    static DEFAULT_UNKNOWN_COIN_UI_LOGO_PATH = "/images/token/unknown-token.svg";
-    static DEFAULT_UNKNOWN_WALLET_UI_LOGO_PATH = "/images/token/unknown-wallet.svg"
-}
-
 export class DateConstants {
     static MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 }

@@ -45,3 +45,11 @@ export class AptosConstants {
         name: AptosConstants.APTOS_COIN_NAME
     } as CoinType;
 }
+
+export enum ChainNames {
+    SUI_DEVNET = 'sui:devnet',
+    SUI_TESTNET = 'sui:testnet',
+    APTOS_DEVNET = 'aptos:devnet',
+    APTOS_TESTNET = 'aptos:testnet',
+    APTOS_MAINNET = 'aptos:mainnet'
+}

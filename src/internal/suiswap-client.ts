@@ -1,6 +1,6 @@
-import { JsonRpcProvider as SuiJsonRpcProvider, MoveCallTransaction as SuiMoveCallTransaction, SuiMoveObject, SuiObject, GetObjectDataResponse } from '@mysten/sui.js';
+import { bcs as SuiBCS, SuiJsonValue, JsonRpcProvider as SuiJsonRpcProvider, MoveCallTransaction as SuiMoveCallTransaction, SuiMoveObject, SuiObject, GetObjectDataResponse } from '@mysten/sui.js';
 import { MoveTemplateType, PoolInfo, CoinType, PoolType, CoinInfo, AddressType, TxHashType, PositionInfo, CommonTransaction, WeeklyStandardMovingAverage, uniqArrayOn, isSameCoinType } from './common';
-import { TransactionOperation } from './transaction';
+import { TransactionOperation, TransacationArgument, TransactionArgumentHelper, TransactionTypeSerializeContext } from './transaction';
 import { BigIntConstants, NumberLimit, SuiConstants } from './constants';
 import { Client } from './client';
 
@@ -10,7 +10,6 @@ export interface SuiswapClientTransactionContext {
 }
 
 export class SuiswapClient extends Client {
-
     static DEFAULT_GAS_BUDGET = BigInt(2000);
     
     packageAddr: AddressType;
@@ -177,7 +176,10 @@ export class SuiswapClient extends Client {
         else if (opt.operation === "remove-liqudity") {
             return (await this._generateMoveTransaction_RemoveLiquidity(opt as TransactionOperation.RemoveLiquidity, ctx));
         }
-        throw new Error(`Not implemented`);
+        else if (opt.operation === "raw") {
+            return (await this._generateMoveTransaction_Raw(opt as TransactionOperation.Raw, ctx));
+        }
+        throw new Error(`generateMoveTransaction not implemented for certain operation`);
     }
 
     generateMoveTransactionOrNull = async (opt: TransactionOperation.Any, ctx: SuiswapClientTransactionContext) => {
@@ -446,8 +448,7 @@ export class SuiswapClient extends Client {
         return transacation;
     }
 
-    _generateMoveTransaction_RemoveLiquidity = async (opt: TransactionOperation.RemoveLiquidity, ctx: SuiswapClientTransactionContext) => {;
-
+    _generateMoveTransaction_RemoveLiquidity = async (opt: TransactionOperation.RemoveLiquidity, ctx: SuiswapClientTransactionContext) => {
         const gasBudget = ctx.gasBudget ?? SuiswapClient.DEFAULT_GAS_BUDGET;
 
         const position = opt.positionInfo;
@@ -486,5 +487,98 @@ export class SuiswapClient extends Client {
         };
 
         return transacation;
+    }
+
+    _generateMoveTransaction_Raw = async (opt: TransactionOperation.Raw, ctx: SuiswapClientTransactionContext) => { 
+        const accountAddr = ctx.accountAddr;
+
+        const gasBudget = ctx.gasBudget ?? SuiswapClient.DEFAULT_GAS_BUDGET;
+        const gasCoin = await this.getGasCoin(accountAddr, [], gasBudget);
+        if (gasCoin === null) {
+            throw new Error("Cannot find the gas payment or not enough amount for paying the gas");
+        }
+
+        // Serialize the transaction
+        const t = opt.transaction;
+        const tCtx: TransactionTypeSerializeContext = { packageAddr: this.packageAddr, sender: accountAddr };
+        const sp = t.function.split("::");
+        const packageObjectId = sp[0].replace("@", this.packageAddr);
+        const module_ = sp[1];
+        const function_ = sp[2];
+        const typeArguments = t.type_arguments.map(ty => ty.replace("@", this.packageAddr));
+        const arguments_ = t.arguments.map(arg => ( SuiSerializer.toJsonArgument(arg, tCtx) as SuiJsonValue) );
+
+        let transacation: SuiMoveCallTransaction = {
+            packageObjectId, 
+            module: module_, 
+            function: function_, 
+            typeArguments, 
+            arguments: arguments_, 
+            gasBudget: Number(gasBudget),
+            gasPayment: gasCoin.addr
+        }
+
+        return transacation;
+    }
+}
+
+
+class SuiSerializer {
+    static _SERIALIZE_TRANSACTION_HAS_PREPARED = false;
+
+    static _normalizArgument = (v: TransacationArgument, ctx: TransactionTypeSerializeContext) => {
+        if (SuiSerializer._SERIALIZE_TRANSACTION_HAS_PREPARED === false) {
+            SuiSerializer._SERIALIZE_TRANSACTION_HAS_PREPARED = true;
+            if (!SuiBCS.hasType(Object.getPrototypeOf(SuiBCS) .ADDRESS)) {
+                SuiBCS.registerAddressType(Object.getPrototypeOf(SuiBCS).ADDRESS, 20);
+            }
+        }
+        return TransactionArgumentHelper.normalizeTransactionArgument(v, ctx);
+    }
+
+    static toBCSArgument = (v: TransacationArgument, ctx: TransactionTypeSerializeContext) => {
+        const vs = SuiSerializer._normalizArgument(v, ctx);
+    
+        const tag = vs[0];
+        const value = vs[1] as (string | number | bigint);
+        if (tag === "address") {    
+            return SuiBCS.ser(Object.getPrototypeOf(SuiBCS).ADDRESS, value.toString()).toBytes();
+        }
+        else if (tag === "string") {
+            return SuiBCS.ser(Object.getPrototypeOf(SuiBCS).STRING, value.toString()).toBytes();
+        }
+        else if (tag === "u8") {
+            return SuiBCS.ser(Object.getPrototypeOf(SuiBCS).U8, value).toBytes();
+        }
+        else if (tag === "u16") {
+            throw Error("Sui doesn't support u16 type bcs serialization");
+        }
+        else if (tag === "u32") {
+            return SuiBCS.ser(Object.getPrototypeOf(SuiBCS).U32, value).toBytes();
+        }
+        else if (tag === "u64") {
+            return SuiBCS.ser(Object.getPrototypeOf(SuiBCS).U64, value).toBytes();
+        }
+        else if (tag === "u128") {
+            return SuiBCS.ser(Object.getPrototypeOf(SuiBCS).U128, value).toBytes();
+        }
+        throw Error(`[SuiSerializer] BCS serialize error on argument: ${v}`)
+    }
+
+    static toJsonArgument = (v: TransacationArgument, ctx: TransactionTypeSerializeContext) => {
+        const vs = SuiSerializer._normalizArgument(v, ctx);
+
+        const tag = vs[0];
+        const value = vs[1];
+        if (tag === "address" || tag === "string") {    
+            return value.toString();
+        }
+        else if (tag === "u8" || tag === "u16" || tag === "u32") {
+            return Number(value);
+        }
+        else if (tag === "u64" || tag === "u128") {
+            return value.toString();
+        }
+        throw Error(`[SuiSerializer] Json serialize error on argument: ${v}`)
     }
 }

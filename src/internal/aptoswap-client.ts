@@ -1,14 +1,116 @@
 import { AptosAccount, AptosClient, FaucetClient as AptosFaucetClient, Types as AptosTypes } from 'aptos';
 import { MoveTemplateType, PoolInfo, CoinType, PoolType, CoinInfo, AddressType, PositionInfo, CommonTransaction, WeeklyStandardMovingAverage, uniqArrayOn, SwapTransactionData, DepositTransactionData, WithdrawTransactionData, PoolDirectionType, isSameCoinType } from './common';
-import { AptosSerializer, TransactionOperation, TransactionOptions, TransactionType, TransactionTypeSerializeContext } from './transaction';
+import { TransactionArgumentHelper, TransacationArgument, TransactionOperation, TransactionOptions, TransactionType, TransactionTypeSerializeContext } from './transaction';
 import { AptosConstants, BigIntConstants } from './constants';
 import { Client } from './client';
+import { BCS as AptosBCS, TxnBuilderTypes, Types } from 'aptos';
 import axios from "axios"
 
 export interface AptoswapClientTransactionContext {
     accountAddr: AddressType;
     gasBudget?: bigint;
     gasPrice?: bigint;
+}
+
+class AptosSerializer {
+
+    static _normalizArgument = (v: TransacationArgument, ctx: TransactionTypeSerializeContext) => {
+        return TransactionArgumentHelper.normalizeTransactionArgument(v, ctx)
+    }
+
+    static normalized(v: TransactionType, ctx: TransactionTypeSerializeContext) {
+        const t = {
+            function: v.function.replace("@", ctx.packageAddr),
+            type_arguments: v.type_arguments.map(t => t.replace("@", ctx.packageAddr)),
+            arguments: v.arguments.map(arg => AptosSerializer._normalizArgument(arg, ctx)) 
+        } as TransactionType;
+        return t;
+    }
+
+    static toBCSArgument = (v: TransacationArgument, ctx: TransactionTypeSerializeContext) => {
+        let vs: any = v;
+        if (typeof v === "string") {
+            vs = v.startsWith("0x") ? ["address", v] : ["string", v];
+        }
+        else if (typeof v === "number") {
+            vs = ["u64", v];
+        }
+        else if (typeof v === "bigint") {
+            vs = ["u64", v];
+        }
+        else {
+            vs = v;
+        }
+    
+        const tag = vs[0] as "address" | "string" | "u8" | "u16" | "u32" | "u64" | "u128";
+        const value = vs[1] as (string | number | bigint);
+        if (tag === "address") {
+            let valueStr = value.toString();
+    
+            // Use @ to replace current package addr
+            if (valueStr === "@") {
+               valueStr = ctx.packageAddr;
+            }
+            else if (valueStr === "$sender") {
+                valueStr = ctx.sender;
+            }
+    
+            return AptosBCS.bcsToBytes(TxnBuilderTypes.AccountAddress.fromHex(valueStr));
+        }
+        else if (tag === "string") {
+            return AptosBCS.bcsSerializeStr(value.toString());
+        }
+        else if (tag === "u8") {
+            return AptosBCS.bcsSerializeU8(Number(value));
+        }
+        else if (tag === "u16") {
+            return AptosBCS.bcsSerializeU16(Number(value));
+        }
+        else if (tag === "u32") {
+            return AptosBCS.bcsSerializeU32(Number(value));
+        }
+        else if (tag === "u64") {
+            return AptosBCS.bcsSerializeUint64(BigInt(value));
+        }
+        else if (tag === "u128") {
+            return AptosBCS.bcsSerializeU128(BigInt(value));
+        }
+        throw Error(`[AptosSerializer] BCS serialize error on argument: ${v}`)
+    }
+
+    static toEntryFunctionPayload = (t: TransactionType, ctx: TransactionTypeSerializeContext) => {
+        const t_ = AptosSerializer.normalized(t, ctx);
+        return {
+            function: t_.function,
+            type_arguments: t_.type_arguments,
+            arguments: t_.arguments.map(x => (Array.isArray(x) ? x[1].toString() : x.toString()))
+        } as Types.EntryFunctionPayload;
+    }
+
+    // static toPayload = (t: TransactionType, ctx: TransactionTypeSerializeContext) => {
+    //     const packageAddr = ctx.packageAddr;
+
+    //     const transactionFunctionSplit = t.function.split("::");
+    //     const moduleName = transactionFunctionSplit.slice(0, -1).join("::").replace("@", packageAddr);
+    //     const functionName = transactionFunctionSplit.slice(-1)[0];
+    
+    //     const typeArguments = t.type_arguments
+    //         .map(ty => ty.replace("@", ctx.packageAddr))
+    //         .map(ty => new AptosTxnBuilderTypes.TypeTagStruct(AptosTxnBuilderTypes.StructTag.fromString(ty)));
+    
+    //     const args = t.arguments.map(x => AptosSerializer.toBCSArgument(x, ctx));
+    
+    //     const payload = new AptosTxnBuilderTypes.TransactionPayloadEntryFunction(
+    //         AptosTxnBuilderTypes.EntryFunction.natural(
+    //             moduleName,
+    //             functionName,
+    //             typeArguments,
+    //             args
+    //         )
+    //     );
+    
+    //     return payload;
+    // }
 }
 
 export class AptoswapClient extends Client {
@@ -451,30 +553,35 @@ export class AptoswapClient extends Client {
         else if (opt.operation === "remove-liqudity") {
             return (await this._generateTransactionType_RemoveLiquidity(opt as TransactionOperation.RemoveLiquidity, ctx));
         }
+        else if (opt.operation === "raw") {
+            return opt.transaction;
+        }
         throw new Error(`Not implemented`);
     }
 
-    generateEntryFuntionPayload = async (opt: TransactionOperation.Any, accountAddr: AddressType, opts: TransactionOptions) => {
+    execute = async (opt: TransactionOperation.Any, account: AptosAccount, opts: TransactionOptions, timeout?: number) => {
+        const accountAddr = account.address().toString();
+
+        // Get the transaction context
         const transcationCtx: AptoswapClientTransactionContext = {
             accountAddr: accountAddr,
             gasBudget: opts.maxGasAmount ?? AptoswapClient.DEFAULT_GAS_BUDGET,
             gasPrice: opts.gasUnitPrice ?? this.minGasPrice
         };
-        
+
+        // Get the serialize context
         const serializeCtx: TransactionTypeSerializeContext = {
             packageAddr: this.getPackageAddress(),
             sender: accountAddr
         };
 
+        // Get the transaction type
         const t = await this.generateTransactionType(opt, transcationCtx);
+
+        // Get the payload
         const payload = AptosSerializer.toEntryFunctionPayload(t, serializeCtx);
-        return payload;
-    }
 
-    submit = async (opt: TransactionOperation.Any, account: AptosAccount, opts: TransactionOptions) => { 
-        const accountAddr = account.address().toString();
-        const payload = await this.generateEntryFuntionPayload(opt, accountAddr, opts);
-
+        // Get the raw transaction
         const rawTransaction = await this.client.generateTransaction(
             accountAddr, 
             payload, 
@@ -484,14 +591,11 @@ export class AptoswapClient extends Client {
                 expiration_timestamp_secs: (Math.floor(Date.now() / 1000) + (opts?.expirationSecond ?? AptoswapClient.DEFAULT_EXPIRATION_SECS)).toString()
             }
         );
-        
+
         const signedTransaction = await this.client.signTransaction(account, rawTransaction);
         const pendingTransaction = await this.client.submitTransaction(signedTransaction);
-        return pendingTransaction.hash;
-    }
+        const txHash = pendingTransaction.hash;
 
-    execute = async (opt: TransactionOperation.Any, account: AptosAccount, opts: TransactionOptions, timeout?: number) => {
-        const txHash = await this.submit(opt, account, opts);
         const result = await this.client.waitForTransactionWithResult(txHash, { timeoutSecs: timeout ?? AptoswapClient.DEFAULT_EXECUTE_TIMEOUT_SECS, checkSuccess: false });
         return (result as AptosTypes.UserTransaction);
     }

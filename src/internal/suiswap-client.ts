@@ -11,6 +11,11 @@ export interface SuiswapClientTransactionContext {
 
 export class SuiswapClient extends Client {
     static DEFAULT_GAS_BUDGET = BigInt(2000);
+
+    static DEFAULT_SWAP_GAS_AMOUNT = BigInt(500);
+    static DEFAULT_ADD_LIQUIDITY_GAS_AMOUNT = BigInt(500);
+    static DEFAULT_MINT_TEST_COIN_GAS_AMOUNT = BigInt(500);
+    static DEFAULT_REMOVE_LIQUIDITY_GAS_AMOUNT = BigInt(500);
     
     packageAddr: AddressType;
     testTokenSupplyAddr: AddressType;
@@ -265,7 +270,7 @@ export class SuiswapClient extends Client {
     }
 
     _generateMoveTransaction_Swap = async (opt: TransactionOperation.Swap, ctx: SuiswapClientTransactionContext) => {
-        const gasBudget = ctx.gasBudget ?? SuiswapClient.DEFAULT_GAS_BUDGET;
+        const gasBudget = ctx.gasBudget ?? SuiswapClient.DEFAULT_SWAP_GAS_AMOUNT;
 
         if (opt.amount <= 0 || opt.amount > NumberLimit.U64_MAX) {
             throw new Error(`Invalid input amount for swapping: ${opt.amount}`);
@@ -314,7 +319,7 @@ export class SuiswapClient extends Client {
 
     _generateMoveTransaction_AddLiqudity = async (opt: TransactionOperation.AddLiqudity, ctx: SuiswapClientTransactionContext) => {
 
-        const gasBudget = ctx.gasBudget ?? SuiswapClient.DEFAULT_GAS_BUDGET;
+        const gasBudget = ctx.gasBudget ?? SuiswapClient.DEFAULT_ADD_LIQUIDITY_GAS_AMOUNT;
 
         const pool = opt.pool;
         const xAmount = opt.xAmount;
@@ -389,7 +394,7 @@ export class SuiswapClient extends Client {
 
     _generateMoveTransaction_MintTestCoin = async (opt: TransactionOperation.MintTestCoin, ctx: SuiswapClientTransactionContext) => {;
 
-        const gasBudget = ctx.gasBudget ?? SuiswapClient.DEFAULT_GAS_BUDGET;
+        const gasBudget = ctx.gasBudget ?? SuiswapClient.DEFAULT_MINT_TEST_COIN_GAS_AMOUNT;
 
         const amount = opt.amount;
         const packageAddr = this.getPackageAddress();
@@ -449,7 +454,7 @@ export class SuiswapClient extends Client {
     }
 
     _generateMoveTransaction_RemoveLiquidity = async (opt: TransactionOperation.RemoveLiquidity, ctx: SuiswapClientTransactionContext) => {
-        const gasBudget = ctx.gasBudget ?? SuiswapClient.DEFAULT_GAS_BUDGET;
+        const gasBudget = ctx.gasBudget ?? SuiswapClient.DEFAULT_REMOVE_LIQUIDITY_GAS_AMOUNT;
 
         const position = opt.positionInfo;
         const pool = position.poolInfo;

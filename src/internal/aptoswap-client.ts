@@ -116,6 +116,12 @@ class AptosSerializer {
 export class AptoswapClient extends Client {
 
     static DEFAULT_GAS_BUDGET = BigInt(2000);
+
+    static DEFAULT_SWAP_GAS_AMOUNT = BigInt(4000);
+    static DEFAULT_ADD_LIQUIDITY_GAS_AMOUNT = BigInt(4000);
+    static DEFAULT_MINT_TEST_COIN_GAS_AMOUNT = BigInt(2000);
+    static DEFAULT_REMOVE_LIQUIDITY_GAS_AMOUNT = BigInt(3000);
+
     static DEFAULT_EXPIRATION_SECS = 90;
     static DEFAULT_EXECUTE_TIMEOUT_SECS = 30;
     static HOST_DEPLOY_JSON_PATH = "api/deploy.json"
@@ -620,7 +626,7 @@ export class AptoswapClient extends Client {
 
     _generateTransactionType_Swap = async (opt: TransactionOperation.Swap, ctx: AptoswapClientTransactionContext) => {
 
-        const gasBudget = ctx.gasBudget ?? AptoswapClient.DEFAULT_GAS_BUDGET;
+        const gasBudget = ctx.gasBudget ?? AptoswapClient.DEFAULT_SWAP_GAS_AMOUNT;
 
         const pool = opt.pool;
         const direction = opt.direction;
@@ -655,7 +661,7 @@ export class AptoswapClient extends Client {
 
     _generateTransactionType_AddLiqudity = async (opt: TransactionOperation.AddLiqudity, ctx: AptoswapClientTransactionContext) => {
 
-        const gasBudget = (ctx.gasBudget ?? AptoswapClient.DEFAULT_GAS_BUDGET);
+        const gasBudget = (ctx.gasBudget ?? AptoswapClient.DEFAULT_ADD_LIQUIDITY_GAS_AMOUNT);
 
         const pool = opt.pool;
         const xAmount = opt.xAmount;
@@ -690,7 +696,7 @@ export class AptoswapClient extends Client {
     }
 
     _generateTransactionType_MintTestCoin = async (opt: TransactionOperation.MintTestCoin, ctx: AptoswapClientTransactionContext) => {
-        const gasBudget = (ctx.gasBudget ?? AptoswapClient.DEFAULT_GAS_BUDGET);
+        const gasBudget = (ctx.gasBudget ?? AptoswapClient.DEFAULT_MINT_TEST_COIN_GAS_AMOUNT);
 
         const amount = opt.amount;
         const packageAddr = this.getPackageAddress();
@@ -715,7 +721,7 @@ export class AptoswapClient extends Client {
     }
 
     _generateTransactionType_RemoveLiquidity = async (opt: TransactionOperation.RemoveLiquidity, ctx: AptoswapClientTransactionContext) => {
-        const gasBudget = ctx.gasBudget ?? AptoswapClient.DEFAULT_GAS_BUDGET;
+        const gasBudget = ctx.gasBudget ?? AptoswapClient.DEFAULT_REMOVE_LIQUIDITY_GAS_AMOUNT;
 
         const positionInfo = opt.positionInfo;
         const packageAddr = this.getPackageAddress();

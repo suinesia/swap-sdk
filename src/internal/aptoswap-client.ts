@@ -5,6 +5,7 @@ import { AptosConstants, BigIntConstants } from './constants';
 import { Client } from './client';
 import { BCS as AptosBCS, TxnBuilderTypes, Types } from 'aptos';
 import axios from "axios"
+import { retry } from './utils';
 
 export interface AptoswapClientTransactionContext {
     accountAddr: AddressType;
@@ -13,7 +14,6 @@ export interface AptoswapClientTransactionContext {
 }
 
 class AptosSerializer {
-
     static _normalizArgument = (v: TransacationArgument, ctx: TransactionTypeSerializeContext) => {
         return TransactionArgumentHelper.normalizeTransactionArgument(v, ctx)
     }
@@ -113,6 +113,28 @@ class AptosSerializer {
     // }
 }
 
+class AptoswapHelper {
+    static getAptosMinGasPrice = async (client: AptosClient) => {
+        // The default gas fee
+        let minGasPrice = BigIntConstants._1E2;
+
+        await retry({
+            times: 3, ms: 2000,
+            fn: async () => {
+                const gasScheduleV2 = ((await client.getAccountResource("0x1", "0x1::gas_schedule::GasScheduleV2")).data as any).entries;
+                for (const entry of (gasScheduleV2) ?? []) {
+                    if (entry.key === "txn.min_price_per_gas_unit") {
+                        minGasPrice = BigInt(entry.val);
+                        break;
+                    }
+                }
+            }
+        });
+
+        return minGasPrice;
+    }
+}
+
 export class AptoswapClient extends Client {
 
     static DEFAULT_GAS_BUDGET = BigInt(2000);
@@ -129,7 +151,7 @@ export class AptoswapClient extends Client {
     packageAddr: AddressType;
     client: AptosClient;
     faucetClient?: AptosFaucetClient;
-    minGasPrice: bigint;
+    _minGasPrice?: bigint;
 
     /**
      * Generate AptoswapClient by providing the host website
@@ -147,24 +169,15 @@ export class AptoswapClient extends Client {
             const endpoint: string = response.data.endpoint;
             const faucetEndpoint: string | undefined = response.data.faucetEndpoint;
             const packageAddr: string = response.data.aptoswap?.package;
-            let minGasPrice: bigint | null = null;
 
-            const gasScheduleV2Client =  new AptosClient(endpoint)
-            const gasScheduleV2 = ((await gasScheduleV2Client.getAccountResource("0x1", "0x1::gas_schedule::GasScheduleV2")).data as any).entries;
-            for (const entry of (gasScheduleV2) ?? []) {
-                if (entry.key === "txn.min_price_per_gas_unit") {
-                    minGasPrice = BigInt(entry.val);
-                }
-            }
-
-            return new AptoswapClient({ packageAddr, endpoint, faucetEndpoint, minGasPrice: minGasPrice ?? BigIntConstants._1E2});
+            return new AptoswapClient({ packageAddr, endpoint, faucetEndpoint});
 
         } catch {
             return null;
         }
     }
 
-    constructor({ packageAddr, endpoint, faucetEndpoint, minGasPrice }: { packageAddr: AddressType, endpoint: string, faucetEndpoint?: string, minGasPrice: bigint }) {
+    constructor({ packageAddr, endpoint, faucetEndpoint, minGasPrice }: { packageAddr: AddressType, endpoint: string, faucetEndpoint?: string, minGasPrice?: bigint }) {
         super();
 
         this.packageAddr = packageAddr;
@@ -174,7 +187,7 @@ export class AptoswapClient extends Client {
             this.faucetClient = new AptosFaucetClient(endpoint, faucetEndpoint);
         }
 
-        this.minGasPrice = minGasPrice;
+        this._minGasPrice = minGasPrice;
     }
 
     getAptosClient = () => {
@@ -542,8 +555,16 @@ export class AptoswapClient extends Client {
         return price;
     }
 
+    getMinGasPrice: () => Promise<bigint> = async () => {
+        if (this._minGasPrice === undefined) {
+            this._minGasPrice = await AptoswapHelper.getAptosMinGasPrice(this.client);
+        }
+        return this._minGasPrice;
+    }
+
     getGasFeePrice: () => Promise<bigint> = async () => {
-        return this.minGasPrice;
+        // Gas fee price is default to min gas price
+        return (await this.getMinGasPrice());
     }
 
     generateTransactionType = async (opt: TransactionOperation.Any, ctx: AptoswapClientTransactionContext) => {
@@ -569,10 +590,11 @@ export class AptoswapClient extends Client {
         const accountAddr = account.address().toString();
 
         // Get the transaction context
+        const gasFeePrice = await this.getGasFeePrice();
         const transcationCtx: AptoswapClientTransactionContext = {
             accountAddr: accountAddr,
             gasBudget: opts.maxGasAmount ?? AptoswapClient.DEFAULT_GAS_BUDGET,
-            gasPrice: opts.gasUnitPrice ?? this.minGasPrice
+            gasPrice: opts.gasUnitPrice ?? gasFeePrice
         };
 
         // Get the serialize context
@@ -593,7 +615,7 @@ export class AptoswapClient extends Client {
             payload, 
             {
                 max_gas_amount: (opts.maxGasAmount ?? AptoswapClient.DEFAULT_GAS_BUDGET).toString(),
-                gas_unit_price: (opts.gasUnitPrice ?? this.minGasPrice).toString(),
+                gas_unit_price: (opts.gasUnitPrice ?? gasFeePrice).toString(),
                 expiration_timestamp_secs: (Math.floor(Date.now() / 1000) + (opts?.expirationSecond ?? AptoswapClient.DEFAULT_EXPIRATION_SECS)).toString()
             }
         );

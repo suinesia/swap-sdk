@@ -2,6 +2,25 @@ import { BigIntConstants } from "./constants";
 
 export const delay = (ms: number) => { return new Promise(resolve => setTimeout(resolve, ms)) };
 
+export const retry = async ({times, ms, fn}: {times: number, ms?: number, fn: () => Promise<void>}) => {
+    for (let __i = 0; __i < times; ++__i) {
+        try {
+            await fn();
+            break;
+        } catch (_e) {
+            if (__i + 1 < times) {
+                if (ms !== undefined) {
+                    await delay(ms);
+                }
+                continue;
+            }
+            else {
+                throw _e;
+            }
+        }
+    }
+}
+
 export const groupBy = <T, K extends keyof any>(arr: T[], key: (i: T) => K) =>
     arr.reduce((groups, item) => {
         (groups[key(item)] ||= []).push(item);

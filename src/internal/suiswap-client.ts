@@ -1,4 +1,4 @@
-import { bcs as SuiBCS, SuiJsonValue, JsonRpcProvider as SuiJsonRpcProvider, MoveCallTransaction as SuiMoveCallTransaction, SuiMoveObject, SuiObject, GetObjectDataResponse, SuiTransactionAuthSignersResponse } from '@mysten/sui.js';
+import { bcs as SuiBCS, SuiJsonValue, JsonRpcProvider as SuiJsonRpcProvider, MoveCallTransaction as SuiMoveCallTransaction, SuiMoveObject, SuiObject, GetObjectDataResponse } from '@mysten/sui.js';
 import { MoveTemplateType, PoolInfo, CoinType, PoolType, CoinInfo, AddressType, TxHashType, PositionInfo, CommonTransaction, WeeklyStandardMovingAverage, uniqArrayOn, isSameCoinType } from './common';
 import { TransactionOperation, TransacationArgument, TransactionArgumentHelper, TransactionTypeSerializeContext } from './transaction';
 import { BigIntConstants, NumberLimit, SuiConstants } from './constants';
@@ -12,10 +12,10 @@ export interface SuiswapClientTransactionContext {
 export class SuiswapClient extends Client {
     static DEFAULT_GAS_BUDGET = BigInt(2000);
 
-    static DEFAULT_SWAP_GAS_AMOUNT = BigInt(500);
-    static DEFAULT_ADD_LIQUIDITY_GAS_AMOUNT = BigInt(500);
-    static DEFAULT_MINT_TEST_COIN_GAS_AMOUNT = BigInt(500);
-    static DEFAULT_REMOVE_LIQUIDITY_GAS_AMOUNT = BigInt(500);
+    static DEFAULT_SWAP_GAS_AMOUNT = BigInt(1000);
+    static DEFAULT_ADD_LIQUIDITY_GAS_AMOUNT = BigInt(1000);
+    static DEFAULT_MINT_TEST_COIN_GAS_AMOUNT = BigInt(1000);
+    static DEFAULT_REMOVE_LIQUIDITY_GAS_AMOUNT = BigInt(1000);
     
     packageAddr: AddressType;
     testTokenSupplyAddr: AddressType;

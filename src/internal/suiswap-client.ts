@@ -54,6 +54,25 @@ export class SuiswapClient extends Client {
         return this.provider;
     }
 
+    getEstimateGasAmount = (t: TransactionOperation.AnyType) => {
+        if (t === "swap") {
+            return SuiswapClient.DEFAULT_SWAP_GAS_AMOUNT;
+        }
+        else if (t === "add-liqudity") {
+            return SuiswapClient.DEFAULT_ADD_LIQUIDITY_GAS_AMOUNT;
+        }
+        else if (t === "remove-liqudity") {
+            return SuiswapClient.DEFAULT_REMOVE_LIQUIDITY_GAS_AMOUNT;
+        }
+        else if (t === "mint-test-coin") {
+            return SuiswapClient.DEFAULT_MINT_TEST_COIN_GAS_AMOUNT;
+        }
+        else if (t === "raw") {
+            return SuiswapClient.DEFAULT_GAS_BUDGET;
+        }
+        return SuiswapClient.DEFAULT_GAS_BUDGET;
+    }
+
     getGasFeePrice: () => Promise<bigint> = async () => {
         const provider = this.getSuiProvider();
         try {

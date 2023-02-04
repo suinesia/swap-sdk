@@ -1,4 +1,5 @@
 import {  PoolInfo, CoinType, CoinInfo, AddressType, TxHashType, PositionInfo, CommonTransaction } from './common';
+import { TransactionOperation } from './transaction';
 
 export abstract class Client {
     abstract getPackageAddress: () => AddressType;
@@ -11,7 +12,9 @@ export abstract class Client {
     abstract getTransactions: (accountAddr: AddressType, limit: number) => Promise<CommonTransaction[]>;
     abstract getPrimaryCoinPrice: () => Promise<number>;
     abstract getAccountPositionInfos: (pools: PoolInfo[], coins: CoinInfo[]) => PositionInfo[];
+
     abstract getGasFeePrice: () => Promise<bigint>;
+    abstract getEstimateGasAmount: (t: TransactionOperation.AnyType) => bigint;
 
     getCoins: () => Promise<CoinType[]> = async () => {
         return (await this.getCoinsAndPools()).coins;

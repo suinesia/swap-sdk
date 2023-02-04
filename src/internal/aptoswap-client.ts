@@ -555,6 +555,25 @@ export class AptoswapClient extends Client {
         return price;
     }
 
+    getEstimateGasAmount = (t: TransactionOperation.AnyType) => {
+        if (t === "swap") {
+            return AptoswapClient.DEFAULT_SWAP_GAS_AMOUNT;
+        }
+        else if (t === "add-liqudity") {
+            return AptoswapClient.DEFAULT_ADD_LIQUIDITY_GAS_AMOUNT;
+        }
+        else if (t === "remove-liqudity") {
+            return AptoswapClient.DEFAULT_REMOVE_LIQUIDITY_GAS_AMOUNT;
+        }
+        else if (t === "mint-test-coin") {
+            return AptoswapClient.DEFAULT_MINT_TEST_COIN_GAS_AMOUNT;
+        }
+        else if (t === "raw") {
+            return AptoswapClient.DEFAULT_GAS_BUDGET;
+        }
+        return AptoswapClient.DEFAULT_GAS_BUDGET;
+    }
+
     getMinGasPrice: () => Promise<bigint> = async () => {
         if (this._minGasPrice === undefined) {
             this._minGasPrice = await AptoswapHelper.getAptosMinGasPrice(this.client);

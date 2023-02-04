@@ -1,0 +1,490 @@
+import { JsonRpcProvider as SuiJsonRpcProvider, MoveCallTransaction as SuiMoveCallTransaction, SuiMoveObject, SuiObject, GetObjectDataResponse } from '@mysten/sui.js';
+import { MoveTemplateType, PoolInfo, CoinType, PoolType, CoinInfo, AddressType, TxHashType, PositionInfo, CommonTransaction, WeeklyStandardMovingAverage, uniqArrayOn, isSameCoinType } from './common';
+import { TransactionOperation } from './transaction';
+import { BigIntConstants, NumberLimit, SuiConstants } from './constants';
+import { Client } from './client';
+
+export interface SuiswapClientTransactionContext {
+    accountAddr: AddressType;
+    gasBudget?: bigint;
+}
+
+export class SuiswapClient extends Client {
+
+    static DEFAULT_GAS_BUDGET = BigInt(2000);
+    
+    packageAddr: AddressType;
+    testTokenSupplyAddr: AddressType;
+    owner: AddressType;
+    endpoint: string;
+    provider: SuiJsonRpcProvider;
+    
+    gasFeePrice: bigint;
+
+    constructor({ packageAddr, testTokenSupplyAddr, owner, endpoint } : { packageAddr: AddressType, testTokenSupplyAddr: AddressType, owner: AddressType, endpoint: string }) {
+        super();
+        this.packageAddr = packageAddr;
+        this.testTokenSupplyAddr = testTokenSupplyAddr;
+        this.owner = owner;
+        this.endpoint = endpoint;
+        this.provider = new SuiJsonRpcProvider(this.endpoint);
+
+        // Initialize as one (before version 0.22)
+        this.gasFeePrice = BigIntConstants.ONE;
+    }
+
+    getPackageAddress = () => {
+        return this.packageAddr;
+    }
+
+    getPrimaryCoinType = () => {
+        return SuiConstants.SUI_COIN_TYPE;
+    }
+
+    getPool = async (poolInfo: PoolInfo) => {
+        const response = (await this.provider.getObject(poolInfo.addr));
+        return this._mapResponseToPoolInfo(response);
+    }
+
+    getSuiProvider = () => {
+        return this.provider;
+    }
+
+    getGasFeePrice: () => Promise<bigint> = async () => {
+        const provider = this.getSuiProvider();
+        try {
+            const newGasPrice = await provider.getReferenceGasPrice();            
+            this.gasFeePrice = BigInt(newGasPrice);
+        }
+        catch (_e) {
+
+         }
+        return this.gasFeePrice;
+    }
+
+    getCoinsAndPools: (() => Promise<{ coins: CoinType[]; pools: PoolInfo[]; }>) = async () => {
+        const packageAddr = this.packageAddr;
+        const packageOwner = this.owner;
+
+        const poolInfoIds = (await this.provider.getObjectsOwnedByAddress(packageOwner))
+            .filter((obj) => { return (obj.type === `${packageAddr}::pool::PoolCreateInfo`) })
+            .map((obj) => obj.objectId);
+
+        const poolInfoObjects = await this.provider.getObjectBatch(poolInfoIds);
+
+        const poolIds = poolInfoObjects.map((x) => {
+            const details = x.details as SuiObject;
+            const object = details.data as SuiMoveObject;
+            const poolId = object.fields["pool_id"] as string;
+            return poolId;
+        });
+
+        const poolInfos = (await this.provider.getObjectBatch(poolIds)).map((response) => this._mapResponseToPoolInfo(response)).filter(x => x !== null) as PoolInfo[];
+
+        const coinTypes = uniqArrayOn(poolInfos.flatMap((poolInfo) => [poolInfo.type.xTokenType, poolInfo.type.yTokenType]), coinType => coinType.name);
+        return { coins: coinTypes, pools: poolInfos };
+    };
+
+    getAccountCoins: (accountAddr: AddressType, filter?: string[] | undefined) => Promise<CoinInfo[]> = async (accountAddr: AddressType, filter?: Array<string>) => {
+        let coinFilter = new Set<string>();
+        if (filter !== undefined) {
+            filter.forEach((x) => { coinFilter.add(`0x2::coin::Coin<${x}>`) });
+        }
+
+        const accountObjects = (await this.provider.getObjectsOwnedByAddress(accountAddr));
+        const accountCoinObjects = accountObjects.filter((obj) => obj.type.startsWith("0x2::coin::Coin"));
+        const accountFilteredCoinObjects = (filter === undefined) ? accountCoinObjects : accountCoinObjects.filter((obj) => coinFilter.has(obj.type));
+
+        const coinAddrs = accountFilteredCoinObjects.map(x => x.objectId);
+        const coinObjects = (await this.provider.getObjectBatch(coinAddrs)).filter(x => (x.status === "Exists"));
+
+        const coins = coinObjects.map(x => {
+            let data = ((x.details as SuiObject).data as SuiMoveObject);
+            let coin = {
+                type: { name: data.type.replace(/^0x2::coin::Coin<(.+)>$/, "$1"), network: "sui" },
+                addr: data.fields.id.id as AddressType,
+                balance: BigInt(data.fields.balance)
+            } as CoinInfo;
+            return coin;
+        });
+
+        return coins.filter((coin) => coin.balance > BigIntConstants.ZERO);
+    }
+
+    getAccountPoolLspCoins = async (accountAddr: string) => {
+        const packageAddr = this.packageAddr;
+
+        const coinFilter = [`${packageAddr}::pool::LSP<0x2::sui::SUI, ${packageAddr}::pool::TestToken>`];
+        const coins = (await this.getSortedAccountCoinsArray(accountAddr, coinFilter))[0];
+        return coins;
+    }
+
+    getAccountPositionInfos = (pools: PoolInfo[], coins: CoinInfo[]) => {
+        const packageAddr = this.packageAddr;
+        const lspPrefix = `${packageAddr}::pool::LSP`;
+
+        const lspCoins = coins.filter(coin => coin.type.name.startsWith(lspPrefix));
+        const lspPositionInfos = lspCoins
+            .map(coin => {
+                try {
+                    const template = MoveTemplateType.fromString(coin.type.name)!;
+                    const xCoinTypeName = template.typeArgs[0];
+                    const yCoinTypeName = template.typeArgs[1];
+
+                    const poolInfos = pools.filter((p) => (p.type.xTokenType.name === xCoinTypeName && p.type.yTokenType.name === yCoinTypeName))
+                    if (poolInfos.length === 0) return null;
+
+                    // Get the largest one
+                    let poolInfo = poolInfos[0];
+                    for (const p of poolInfos) {
+                        if (p.lspSupply > poolInfo.lspSupply) {
+                            poolInfo = p;
+                        }
+                    }
+
+                    return new PositionInfo(poolInfo, coin);
+                } catch { }
+
+                return null;
+            })
+            .filter(x => x !== null) as PositionInfo[];
+        return lspPositionInfos;
+    }
+
+    getExplorerHrefForTxHash = (txHash: TxHashType) => {
+        return `https://explorer.devnet.sui.io/transactions/${txHash}`;
+    }
+
+    getTransactions: (accountAddr: string, limit: number) => Promise<CommonTransaction[]> = async (_accountAddr: string, _limit: number) => {
+        // TODO: SUI
+        return [];
+    }
+
+    getPrimaryCoinPrice: () => Promise<number> = async () => {
+        return (38.535 + Math.random() * 0.03);
+    }
+
+    generateMoveTransaction = async (opt: TransactionOperation.Any, ctx: SuiswapClientTransactionContext) => {
+        if (opt.operation === "swap") {
+            return (await this._generateMoveTransaction_Swap(opt as TransactionOperation.Swap, ctx));
+        }
+        else if (opt.operation === "add-liqudity") {
+            return (await this._generateMoveTransaction_AddLiqudity(opt as TransactionOperation.AddLiqudity, ctx));
+        }
+        else if (opt.operation === "mint-test-coin") {
+            return (await this._generateMoveTransaction_MintTestCoin(opt as TransactionOperation.MintTestCoin, ctx));
+        }
+        else if (opt.operation === "remove-liqudity") {
+            return (await this._generateMoveTransaction_RemoveLiquidity(opt as TransactionOperation.RemoveLiquidity, ctx));
+        }
+        throw new Error(`Not implemented`);
+    }
+
+    generateMoveTransactionOrNull = async (opt: TransactionOperation.Any, ctx: SuiswapClientTransactionContext) => {
+        try {
+            const transaction = await this.generateMoveTransaction(opt, ctx);
+            return transaction;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    getGasCoin = async (accountAddr: AddressType, excludeCoinsAddresses: AddressType[], estimateGas: bigint) => {
+        const primaryCoins = (await this.getSortedAccountCoinsArray(accountAddr, [this.getPrimaryCoinType().name]))[0];
+        const primaryCoinsFiltered = primaryCoins.filter(coin => excludeCoinsAddresses.indexOf(coin.addr) === -1);
+
+        let minimumGasCoinIndex = -1;
+        primaryCoinsFiltered.forEach((coin, index) => {
+            if (coin.balance >= estimateGas) {
+                if (minimumGasCoinIndex < 0 || primaryCoinsFiltered[minimumGasCoinIndex].balance > coin.balance) {
+                    minimumGasCoinIndex = index;
+                }
+            }
+        })
+
+        if (minimumGasCoinIndex < 0) {
+            return null;
+        }
+
+        return primaryCoinsFiltered[minimumGasCoinIndex];
+    }
+
+    _mapResponseToPoolInfo = (response: GetObjectDataResponse) => {
+        try {
+            const details = response.details as SuiObject;
+            const typeString = (details.data as SuiMoveObject).type;
+            const poolTemplateType = MoveTemplateType.fromString(typeString)!;
+            const poolType: PoolType = {
+                xTokenType: { network: "sui", name: poolTemplateType.typeArgs[0] },
+                yTokenType: { network: "sui", name: poolTemplateType.typeArgs[1] },
+            };
+            const fields = (details.data as SuiMoveObject).fields;
+
+            const poolInfo = new PoolInfo({
+                type: poolType,
+                typeString: typeString,
+                addr: fields.id.id,
+
+                index: 0, // TODO: SUI
+                swapType: "v2", // TODO: SUI
+
+                x: BigInt(fields.x),
+                y: BigInt(fields.y),
+                lspSupply: BigInt(fields.lsp_supply.fields.value),
+
+                feeDirection: "X",
+
+                stableAmp: BigIntConstants.ZERO, // TODO: SUI
+                stableXScale: BigIntConstants.ZERO, // TODO: SUI
+                stableYScale: BigIntConstants.ZERO, // TODO: SUI
+
+                freeze: fields.freeze,
+                lastTradeTime: 0, // TODO
+
+                totalTradeX: BigIntConstants.ZERO,
+                totalTradeY: BigIntConstants.ZERO,
+                totalTrade24hLastCaptureTime: 0,
+                totalTradeX24h: BigIntConstants.ZERO,
+                totalTradeY24h: BigIntConstants.ZERO,
+
+                kspSma: WeeklyStandardMovingAverage.Zero(),
+
+                adminFee: BigInt(fields.admin_fee),
+                lpFee: BigInt(fields.lp_fee),
+                incentiveFee: BigIntConstants.ZERO,
+                connectFee: BigIntConstants.ZERO,
+                withdrawFee: BigIntConstants.ZERO
+            });
+
+            return poolInfo;
+        } catch (_e) {
+            return null;
+        }
+    }
+
+    _generateMoveTransaction_Swap = async (opt: TransactionOperation.Swap, ctx: SuiswapClientTransactionContext) => {
+        const gasBudget = ctx.gasBudget ?? SuiswapClient.DEFAULT_GAS_BUDGET;
+
+        if (opt.amount <= 0 || opt.amount > NumberLimit.U64_MAX) {
+            throw new Error(`Invalid input amount for swapping: ${opt.amount}`);
+        }
+
+        if ((opt.minOutputAmount !== undefined) && (opt.minOutputAmount < BigIntConstants.ZERO || opt.minOutputAmount > NumberLimit.U64_MAX)) {
+            throw new Error(`Invalid min output amount for swapping: ${opt.minOutputAmount}`);
+        }
+
+        if (opt.pool.freeze) {
+            throw new Error(`Cannot not swap for freeze pool: ${opt.pool.addr}`);
+        }
+
+        const swapCoinType = (opt.direction === "forward") ? opt.pool.type.xTokenType.name : opt.pool.type.yTokenType.name;
+
+        const swapCoins = await this.getAccountCoins(ctx.accountAddr, [swapCoinType]);
+        swapCoins.sort((a, b) => (a.balance < b.balance) ? 1 : (a.balance > b.balance ? -1 : 0));
+
+        if (swapCoins.length === 0) {
+            throw new Error(`The account doesn't hold the coin for swapping: ${swapCoinType}`);
+        }
+        const swapCoin = swapCoins[0];
+
+        const gasCoin = await this.getGasCoin(ctx.accountAddr, [swapCoin.addr], gasBudget);
+        if (gasCoin === null) {
+            throw new Error("Cannot find the gas payment or not enough amount for paying the gas");
+        }
+
+        let transacation: SuiMoveCallTransaction = {
+            packageObjectId: this.getPackageAddress(),
+            module: "pool",
+            function: (opt.direction == "forward") ? "swap_x_to_y" : "swap_y_to_x",
+            typeArguments: [opt.pool.type.xTokenType.name, opt.pool.type.yTokenType.name],
+            arguments: [
+                opt.pool.addr,
+                swapCoin.addr,
+                opt.amount.toString(),
+                gasBudget.toString(),
+            ],
+            gasPayment: gasCoin.addr,
+            gasBudget: Number(gasBudget)
+        };
+
+        return transacation;
+    }
+
+    _generateMoveTransaction_AddLiqudity = async (opt: TransactionOperation.AddLiqudity, ctx: SuiswapClientTransactionContext) => {
+
+        const gasBudget = ctx.gasBudget ?? SuiswapClient.DEFAULT_GAS_BUDGET;
+
+        const pool = opt.pool;
+        const xAmount = opt.xAmount;
+        const yAmount = opt.yAmount;
+
+        if (((xAmount <= 0 || xAmount > NumberLimit.U64_MAX) || (yAmount <= 0 || yAmount > NumberLimit.U64_MAX))) {
+            throw new Error(`Invalid input amount for adding liqudity: ${xAmount} or minOutputAmount: ${yAmount}`);
+        }
+
+        if (pool.freeze) {
+            throw new Error(`Cannot not swap for freeze pool: ${pool.addr}`);
+        }
+
+        // Temporarily comment due to Suiet bug
+        // if ((await this.isConnected()) == false) {
+        //     throw new Error("Wallet is not connected");
+        // }
+
+        const accountAddr = ctx.accountAddr;
+        if (accountAddr === null) {
+            throw new Error("Cannot get the current account address from wallet")
+        }
+
+        // Getting the both x coin and y coin
+        const swapCoins = await this.getAccountCoins(accountAddr, [pool.type.xTokenType.name, pool.type.yTokenType.name]);
+        const swapXCoins = swapCoins.filter(c => isSameCoinType(c.type, pool.type.xTokenType));
+        const swapYCoins = swapCoins.filter(c => isSameCoinType(c.type, pool.type.yTokenType));
+        swapXCoins.sort((a, b) => (a.balance < b.balance) ? 1 : (a.balance > b.balance ? -1 : 0));
+        swapYCoins.sort((a, b) => (a.balance < b.balance) ? 1 : (a.balance > b.balance ? -1 : 0));
+
+        if (swapXCoins.length === 0) {
+            throw new Error(`The account doesn't hold the coin for adding liqudity: ${pool.type.xTokenType.name}`);
+        }
+        if (swapYCoins.length === 0) {
+            throw new Error(`The account doesn't hold the coin for adding liqudity: ${pool.type.yTokenType.name}`);
+        }
+
+        const swapXCoin = swapXCoins[0];
+        const swapYCoin = swapYCoins[0];
+
+        if (swapXCoin.balance < xAmount) {
+            throw new Error(`The account has insuffcient balance for coin ${pool.type.xTokenType.name}, current balance: ${swapXCoin.balance}, expected: ${xAmount}`);
+        }
+        if (swapYCoin.balance < yAmount) {
+            throw new Error(`The account has insuffcient balance for coin ${pool.type.yTokenType.name}, current balance: ${swapYCoin.balance}, expected: ${yAmount}`);
+        }
+
+        const gasCoin = await this.getGasCoin(accountAddr, [swapXCoin.addr, swapYCoin.addr], gasBudget);
+        if (gasCoin === null) {
+            throw new Error("Cannot find the gas payment or not enough amount for paying the gas");
+        }
+
+        // Entry: entry fun add_liquidity<X, Y>(pool: &mut Pool<X, Y>, x: Coin<X>, y: Coin<Y>, in_x_amount: u64, in_y_amount: u64, ctx: &mut TxContext)
+        let transacation: SuiMoveCallTransaction = {
+            packageObjectId: this.getPackageAddress(),
+            module: "pool",
+            function: "add_liquidity",
+            typeArguments: [pool.type.xTokenType.name, pool.type.yTokenType.name],
+            arguments: [
+                pool.addr,
+                swapXCoin.addr,
+                swapYCoin.addr,
+                xAmount.toString(),
+                yAmount.toString()
+            ],
+            gasPayment: gasCoin.addr,
+            gasBudget: Number(gasBudget)
+        };
+
+        return transacation;
+    }
+
+    _generateMoveTransaction_MintTestCoin = async (opt: TransactionOperation.MintTestCoin, ctx: SuiswapClientTransactionContext) => {;
+
+        const gasBudget = ctx.gasBudget ?? SuiswapClient.DEFAULT_GAS_BUDGET;
+
+        const amount = opt.amount;
+        const packageAddr = this.getPackageAddress();
+
+        if (amount <= 0 || amount > NumberLimit.U64_MAX) {
+            throw new Error(`Invalid input amount for minting test token: ${amount}`);
+        }
+
+        // Get test tokens
+        let accountTestTokens: Array<CoinInfo> = [];
+        try {
+            accountTestTokens = (await this.getSortedAccountCoinsArray(ctx.accountAddr, [`${packageAddr}::pool::TestToken`]))[0];
+        } catch {
+            throw new Error("Network error while trying to get the test token info from account");
+        }
+
+        const accountTestToken = (accountTestTokens.length > 0) ? accountTestTokens[0] : null;
+
+        const gasCoin = await this.getGasCoin(ctx.accountAddr, [], gasBudget);
+        if (gasCoin === null) {
+            throw new Error("Cannot find the gas payment or not enough amount for paying the gas");
+        }
+
+        let transacation: SuiMoveCallTransaction = (accountTestToken === null) ? (
+            // entry fun mint_test_token(token_supply: &mut TestTokenSupply, amount: u64, recipient: address, ctx: &mut TxContext)
+            {
+                packageObjectId: packageAddr,
+                module: "pool",
+                function: "mint_test_token",
+                typeArguments: [],
+                arguments: [
+                    this.testTokenSupplyAddr,
+                    amount.toString(),
+                    ctx.accountAddr
+                ],
+                gasPayment: gasCoin.addr,
+                gasBudget: Number(gasBudget)
+            }
+        ) : (
+            // entry fun mint_test_token_merge(token_supply: &mut TestTokenSupply, amount: u64, coin: &mut Coin<TestToken>, ctx: &mut TxContext) {
+            {
+                packageObjectId: packageAddr,
+                module: "pool",
+                function: "mint_test_token_merge",
+                typeArguments: [],
+                arguments: [
+                    this.testTokenSupplyAddr,
+                    amount.toString(),
+                    accountTestToken.addr
+                ],
+                gasPayment: gasCoin.addr,
+                gasBudget: Number(gasBudget)
+            }
+        );
+
+        return transacation;
+    }
+
+    _generateMoveTransaction_RemoveLiquidity = async (opt: TransactionOperation.RemoveLiquidity, ctx: SuiswapClientTransactionContext) => {;
+
+        const gasBudget = ctx.gasBudget ?? SuiswapClient.DEFAULT_GAS_BUDGET;
+
+        const position = opt.positionInfo;
+        const pool = position.poolInfo;
+        const lspCoin = position.lspCoin;
+        const amount = position.balance();
+
+        if ((amount <= 0 || amount > NumberLimit.U64_MAX)) {
+            throw new Error(`Invalid input coin, balance is zero`);
+        }
+
+        const accountAddr = ctx.accountAddr;
+        if (accountAddr === null) {
+            throw new Error("Cannot get the current account address from wallet")
+        }
+
+        // Getting the both x coin and y coin
+        const gasCoin = await this.getGasCoin(accountAddr, [lspCoin.addr], gasBudget);
+        if (gasCoin === null) {
+            throw new Error("Cannot find the gas payment or not enough amount for paying the gas");
+        }
+
+        // Entry: entry fun remove_liquidity<X, Y>(pool: &mut Pool<X, Y>, lsp: Coin<LSP<X, Y>>, lsp_amount: u64, ctx: &mut TxContext)
+        let transacation: SuiMoveCallTransaction = {
+            packageObjectId: this.packageAddr,
+            module: "pool",
+            function: "remove_liquidity",
+            typeArguments: [pool.type.xTokenType.name, pool.type.yTokenType.name],
+            arguments: [
+                pool.addr,
+                lspCoin.addr,
+                amount.toString(),
+            ],
+            gasPayment: gasCoin.addr,
+            gasBudget: Number(gasBudget)
+        };
+
+        return transacation;
+    }
+}

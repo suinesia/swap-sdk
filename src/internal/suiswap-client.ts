@@ -1,4 +1,4 @@
-import { bcs as SuiBCS, SuiJsonValue, JsonRpcProvider as SuiJsonRpcProvider, MoveCallTransaction as SuiMoveCallTransaction, SuiMoveObject, SuiObject, GetObjectDataResponse } from '@mysten/sui.js';
+import { bcs as SuiBCS, SuiJsonValue, JsonRpcProvider as SuiJsonRpcProvider, MoveCallTransaction as SuiMoveCallTransaction, SuiMoveObject, SuiObject, GetObjectDataResponse, SuiTransactionAuthSignersResponse } from '@mysten/sui.js';
 import { MoveTemplateType, PoolInfo, CoinType, PoolType, CoinInfo, AddressType, TxHashType, PositionInfo, CommonTransaction, WeeklyStandardMovingAverage, uniqArrayOn, isSameCoinType } from './common';
 import { TransactionOperation, TransacationArgument, TransactionArgumentHelper, TransactionTypeSerializeContext } from './transaction';
 import { BigIntConstants, NumberLimit, SuiConstants } from './constants';
@@ -289,8 +289,6 @@ export class SuiswapClient extends Client {
     }
 
     _generateMoveTransaction_Swap = async (opt: TransactionOperation.Swap, ctx: SuiswapClientTransactionContext) => {
-        const gasBudget = ctx.gasBudget ?? SuiswapClient.DEFAULT_SWAP_GAS_AMOUNT;
-
         if (opt.amount <= 0 || opt.amount > NumberLimit.U64_MAX) {
             throw new Error(`Invalid input amount for swapping: ${opt.amount}`);
         }
@@ -313,7 +311,10 @@ export class SuiswapClient extends Client {
         }
         const swapCoin = swapCoins[0];
 
-        const gasCoin = await this.getGasCoin(ctx.accountAddr, [swapCoin.addr], gasBudget);
+        const gasBudget = ctx.gasBudget ?? SuiswapClient.DEFAULT_SWAP_GAS_AMOUNT;
+        const gasFee = await this.getGasFeePrice();
+        const gas = gasBudget * gasFee;
+        const gasCoin = await this.getGasCoin(ctx.accountAddr, [swapCoin.addr], gas);
         if (gasCoin === null) {
             throw new Error("Cannot find the gas payment or not enough amount for paying the gas");
         }
@@ -337,9 +338,6 @@ export class SuiswapClient extends Client {
     }
 
     _generateMoveTransaction_AddLiqudity = async (opt: TransactionOperation.AddLiqudity, ctx: SuiswapClientTransactionContext) => {
-
-        const gasBudget = ctx.gasBudget ?? SuiswapClient.DEFAULT_ADD_LIQUIDITY_GAS_AMOUNT;
-
         const pool = opt.pool;
         const xAmount = opt.xAmount;
         const yAmount = opt.yAmount;
@@ -386,7 +384,10 @@ export class SuiswapClient extends Client {
             throw new Error(`The account has insuffcient balance for coin ${pool.type.yTokenType.name}, current balance: ${swapYCoin.balance}, expected: ${yAmount}`);
         }
 
-        const gasCoin = await this.getGasCoin(accountAddr, [swapXCoin.addr, swapYCoin.addr], gasBudget);
+        const gasBudget = ctx.gasBudget ?? SuiswapClient.DEFAULT_ADD_LIQUIDITY_GAS_AMOUNT;
+        const gasFee = await this.getGasFeePrice();
+        const gas = gasBudget * gasFee;
+        const gasCoin = await this.getGasCoin(accountAddr, [swapXCoin.addr, swapYCoin.addr], gas);
         if (gasCoin === null) {
             throw new Error("Cannot find the gas payment or not enough amount for paying the gas");
         }
@@ -412,9 +413,6 @@ export class SuiswapClient extends Client {
     }
 
     _generateMoveTransaction_MintTestCoin = async (opt: TransactionOperation.MintTestCoin, ctx: SuiswapClientTransactionContext) => {;
-
-        const gasBudget = ctx.gasBudget ?? SuiswapClient.DEFAULT_MINT_TEST_COIN_GAS_AMOUNT;
-
         const amount = opt.amount;
         const packageAddr = this.getPackageAddress();
 
@@ -432,7 +430,10 @@ export class SuiswapClient extends Client {
 
         const accountTestToken = (accountTestTokens.length > 0) ? accountTestTokens[0] : null;
 
-        const gasCoin = await this.getGasCoin(ctx.accountAddr, [], gasBudget);
+        const gasBudget = ctx.gasBudget ?? SuiswapClient.DEFAULT_MINT_TEST_COIN_GAS_AMOUNT;
+        const gasFee = await this.getGasFeePrice();
+        const gas = gasBudget * gasFee;
+        const gasCoin = await this.getGasCoin(ctx.accountAddr, [], gas);
         if (gasCoin === null) {
             throw new Error("Cannot find the gas payment or not enough amount for paying the gas");
         }
@@ -473,8 +474,6 @@ export class SuiswapClient extends Client {
     }
 
     _generateMoveTransaction_RemoveLiquidity = async (opt: TransactionOperation.RemoveLiquidity, ctx: SuiswapClientTransactionContext) => {
-        const gasBudget = ctx.gasBudget ?? SuiswapClient.DEFAULT_REMOVE_LIQUIDITY_GAS_AMOUNT;
-
         const position = opt.positionInfo;
         const pool = position.poolInfo;
         const lspCoin = position.lspCoin;
@@ -490,7 +489,11 @@ export class SuiswapClient extends Client {
         }
 
         // Getting the both x coin and y coin
-        const gasCoin = await this.getGasCoin(accountAddr, [lspCoin.addr], gasBudget);
+        const gasBudget = ctx.gasBudget ?? SuiswapClient.DEFAULT_REMOVE_LIQUIDITY_GAS_AMOUNT;
+        const gasPrice = await this.getGasFeePrice();
+        const gas = gasBudget * gasPrice;
+        const gasCoin = await this.getGasCoin(accountAddr, [lspCoin.addr], gas);
+
         if (gasCoin === null) {
             throw new Error("Cannot find the gas payment or not enough amount for paying the gas");
         }
@@ -516,11 +519,6 @@ export class SuiswapClient extends Client {
     _generateMoveTransaction_Raw = async (opt: TransactionOperation.Raw, ctx: SuiswapClientTransactionContext) => { 
         const accountAddr = ctx.accountAddr;
 
-        const gasBudget = ctx.gasBudget ?? SuiswapClient.DEFAULT_GAS_BUDGET;
-        const gasCoin = await this.getGasCoin(accountAddr, [], gasBudget);
-        if (gasCoin === null) {
-            throw new Error("Cannot find the gas payment or not enough amount for paying the gas");
-        }
 
         // Serialize the transaction
         const t = opt.transaction;
@@ -531,6 +529,15 @@ export class SuiswapClient extends Client {
         const function_ = sp[2];
         const typeArguments = t.type_arguments.map(ty => ty.replace("@", this.packageAddr));
         const arguments_ = t.arguments.map(arg => ( SuiSerializer.toJsonArgument(arg, tCtx) as SuiJsonValue) );
+
+        const gasBudget = ctx.gasBudget ?? SuiswapClient.DEFAULT_GAS_BUDGET;
+        const gasFee = await this.getGasFeePrice();
+        const gas = gasBudget * gasFee;
+        
+        const gasCoin = await this.getGasCoin(accountAddr, [], gas);
+        if (gasCoin === null) {
+            throw new Error("Cannot find the gas payment or not enough amount for paying the gas");
+        }
 
         let transacation: SuiMoveCallTransaction = {
             packageObjectId, 

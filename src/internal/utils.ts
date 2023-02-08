@@ -1,20 +1,29 @@
 import { BigIntConstants } from "./constants";
+import { debugLog } from "./debug";
 
 export const delay = (ms: number) => { return new Promise(resolve => setTimeout(resolve, ms)) };
 
-export const retry = async ({times, ms, fn}: {times: number, ms?: number, fn: () => Promise<void>}) => {
+export const retry = async ({times, ms, fn, name}: {times: number, ms?: number, fn: () => Promise<void>, name?: string}) => {
     for (let __i = 0; __i < times; ++__i) {
         try {
+            debugLog(`[retry-function] name=${name} begin`);
             await fn();
+            debugLog(`[retry-function] name=${name} end`);
             break;
         } catch (_e) {
             if (__i + 1 < times) {
                 if (ms !== undefined) {
                     await delay(ms);
                 }
+                if (name !== undefined) {
+                    debugLog(`[retry-function] name=${name} failed ${__i + 1}/${times}`)
+                }
                 continue;
             }
             else {
+                if (name !== undefined) {
+                    debugLog(`[retry-function] name=${name} failed ${__i + 1}/${times}`)
+                }
                 throw _e;
             }
         }

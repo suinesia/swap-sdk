@@ -1,6 +1,11 @@
 import {  PoolInfo, CoinType, CoinInfo, AddressType, TxHashType, PositionInfo, CommonTransaction } from './common';
 import { TransactionOperation } from './transaction';
 
+export enum ClientFeatures {
+    SupportMultiCoins = "SupportMultiCoins",
+    SeparateGasCoin = "SeparateGasCoin"
+}
+
 export abstract class Client {
     abstract getPackageAddress: () => AddressType;
     abstract getCoinsAndPools: () => Promise<{ coins: CoinType[], pools: PoolInfo[] }>;
@@ -15,6 +20,8 @@ export abstract class Client {
 
     abstract getGasFeePrice: () => Promise<bigint>;
     abstract getEstimateGasAmount: (t: TransactionOperation.AnyType) => bigint;
+
+    abstract getFeatures: () => Array<ClientFeatures>
 
     getCoins: () => Promise<CoinType[]> = async () => {
         return (await this.getCoinsAndPools()).coins;

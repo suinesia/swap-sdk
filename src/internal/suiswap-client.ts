@@ -1,8 +1,8 @@
 import { bcs as SuiBCS, SuiJsonValue, JsonRpcProvider as SuiJsonRpcProvider, MoveCallTransaction as SuiMoveCallTransaction, SuiMoveObject, SuiObject, GetObjectDataResponse } from '@mysten/sui.js';
-import { MoveTemplateType, PoolInfo, CoinType, PoolType, CoinInfo, AddressType, TxHashType, PositionInfo, CommonTransaction, WeeklyStandardMovingAverage, uniqArrayOn, isSameCoinType } from './common';
+import { MoveTemplateType, PoolInfo, CoinType, PoolType, CoinInfo, AddressType, TxHashType, PositionInfo, CommonTransaction, WeeklyStandardMovingAverage, uniqArrayOn, isSameCoinType, isSameCoin } from './common';
 import { TransactionOperation, TransacationArgument, TransactionArgumentHelper, TransactionTypeSerializeContext } from './transaction';
 import { BigIntConstants, NumberLimit, SuiConstants } from './constants';
-import { Client } from './client';
+import { Client, ClientFeatures } from './client';
 
 export interface SuiswapClientTransactionContext {
     accountAddr: AddressType;
@@ -35,6 +35,13 @@ export class SuiswapClient extends Client {
 
         // Initialize as one (before version 0.22)
         this.gasFeePrice = BigIntConstants.ONE;
+    }
+
+    getFeatures = () => {
+        return [
+            ClientFeatures.SupportMultiCoins,
+            ClientFeatures.SeparateGasCoin
+        ]
     }
 
     getPackageAddress = () => {
@@ -81,7 +88,7 @@ export class SuiswapClient extends Client {
         }
         catch (_e) {
 
-         }
+        }
         return this.gasFeePrice;
     }
 
@@ -288,6 +295,23 @@ export class SuiswapClient extends Client {
         }
     }
 
+    _getCoinsLargerThanBalance = (cs: CoinInfo[], targetBalance: bigint) => {
+        const cs1 = [...cs];
+        cs1.sort((a, b) => (a.balance < b.balance) ? -1 : (a.balance > b.balance ? 1 : 0));
+    
+        const cs2: Array<CoinInfo> = [];
+        let balance = BigIntConstants.ZERO;
+        for (const coin of cs1) {
+            if (balance >= targetBalance) {
+                break;
+            }
+            cs2.push(coin);
+            balance += coin.balance;
+        }
+
+        return [cs2, balance] as [CoinInfo[], bigint]
+    }
+
     _generateMoveTransaction_Swap = async (opt: TransactionOperation.Swap, ctx: SuiswapClientTransactionContext) => {
         if (opt.amount <= 0 || opt.amount > NumberLimit.U64_MAX) {
             throw new Error(`Invalid input amount for swapping: ${opt.amount}`);
@@ -301,22 +325,30 @@ export class SuiswapClient extends Client {
             throw new Error(`Cannot not swap for freeze pool: ${opt.pool.addr}`);
         }
 
-        const swapCoinType = (opt.direction === "forward") ? opt.pool.type.xTokenType.name : opt.pool.type.yTokenType.name;
-
-        const swapCoins = await this.getAccountCoins(ctx.accountAddr, [swapCoinType]);
-        swapCoins.sort((a, b) => (a.balance < b.balance) ? 1 : (a.balance > b.balance ? -1 : 0));
-
-        if (swapCoins.length === 0) {
-            throw new Error(`The account doesn't hold the coin for swapping: ${swapCoinType}`);
-        }
-        const swapCoin = swapCoins[0];
-
+        // First find the gas coin
         const gasBudget = ctx.gasBudget ?? SuiswapClient.DEFAULT_SWAP_GAS_AMOUNT;
         const gasFee = await this.getGasFeePrice();
         const gas = gasBudget * gasFee;
-        const gasCoin = await this.getGasCoin(ctx.accountAddr, [swapCoin.addr], gas);
+        const gasCoin = await this.getGasCoin(ctx.accountAddr, [], gas);
         if (gasCoin === null) {
             throw new Error("Cannot find the gas payment or not enough amount for paying the gas");
+        }        
+
+        const swapCoinType = (opt.direction === "forward") ? opt.pool.type.xTokenType : opt.pool.type.yTokenType;
+
+        const avaliableSwapCoins = await (await this.getAccountCoins(ctx.accountAddr, [swapCoinType.name])).filter(x => !isSameCoin(x, gasCoin));
+        if (avaliableSwapCoins.length === 0) {
+            if (isSameCoinType(gasCoin.type, swapCoinType)) {
+                throw new Error(`No avalibale coin for swapping when including gas coin, make sure you have at least two coins`);
+            }
+            else {
+                throw new Error(`No avaliable coin for swapping`);
+            }
+        }
+
+        const [swapCoins, swapCoinsTotalBalance] = this._getCoinsLargerThanBalance(avaliableSwapCoins, opt.amount);
+        if (swapCoinsTotalBalance < opt.amount) {
+            throw new Error(`Not enough balance for swapping, max amount: ${swapCoinsTotalBalance}, target amount: ${opt.amount}`);
         }
 
         let transacation: SuiMoveCallTransaction = {
@@ -326,9 +358,9 @@ export class SuiswapClient extends Client {
             typeArguments: [opt.pool.type.xTokenType.name, opt.pool.type.yTokenType.name],
             arguments: [
                 opt.pool.addr,
-                swapCoin.addr,
+                swapCoins.map(x => x.addr),
                 opt.amount.toString(),
-                gasBudget.toString(),
+                opt.minOutputAmount?.toString() ?? "0"
             ],
             gasPayment: gasCoin.addr,
             gasBudget: Number(gasBudget)
@@ -360,36 +392,44 @@ export class SuiswapClient extends Client {
             throw new Error("Cannot get the current account address from wallet")
         }
 
-        // Getting the both x coin and y coin
-        const swapCoins = await this.getAccountCoins(accountAddr, [pool.type.xTokenType.name, pool.type.yTokenType.name]);
-        const swapXCoins = swapCoins.filter(c => isSameCoinType(c.type, pool.type.xTokenType));
-        const swapYCoins = swapCoins.filter(c => isSameCoinType(c.type, pool.type.yTokenType));
-        swapXCoins.sort((a, b) => (a.balance < b.balance) ? 1 : (a.balance > b.balance ? -1 : 0));
-        swapYCoins.sort((a, b) => (a.balance < b.balance) ? 1 : (a.balance > b.balance ? -1 : 0));
-
-        if (swapXCoins.length === 0) {
-            throw new Error(`The account doesn't hold the coin for adding liqudity: ${pool.type.xTokenType.name}`);
-        }
-        if (swapYCoins.length === 0) {
-            throw new Error(`The account doesn't hold the coin for adding liqudity: ${pool.type.yTokenType.name}`);
-        }
-
-        const swapXCoin = swapXCoins[0];
-        const swapYCoin = swapYCoins[0];
-
-        if (swapXCoin.balance < xAmount) {
-            throw new Error(`The account has insuffcient balance for coin ${pool.type.xTokenType.name}, current balance: ${swapXCoin.balance}, expected: ${xAmount}`);
-        }
-        if (swapYCoin.balance < yAmount) {
-            throw new Error(`The account has insuffcient balance for coin ${pool.type.yTokenType.name}, current balance: ${swapYCoin.balance}, expected: ${yAmount}`);
-        }
-
         const gasBudget = ctx.gasBudget ?? SuiswapClient.DEFAULT_ADD_LIQUIDITY_GAS_AMOUNT;
         const gasFee = await this.getGasFeePrice();
         const gas = gasBudget * gasFee;
-        const gasCoin = await this.getGasCoin(accountAddr, [swapXCoin.addr, swapYCoin.addr], gas);
+        const gasCoin = await this.getGasCoin(accountAddr, [], gas);
         if (gasCoin === null) {
             throw new Error("Cannot find the gas payment or not enough amount for paying the gas");
+        }
+
+        // Getting the both x coin and y coin
+        const avaliableSwapCoins = await this.getAccountCoins(accountAddr, [pool.type.xTokenType.name, pool.type.yTokenType.name]);
+        const avaliableSwapXCoins = avaliableSwapCoins.filter(c => isSameCoinType(c.type, pool.type.xTokenType) && !isSameCoin(c, gasCoin));
+        const avaliableSwapYCoins = avaliableSwapCoins.filter(c => isSameCoinType(c.type, pool.type.yTokenType) && !isSameCoin(c, gasCoin));
+
+        if (avaliableSwapXCoins.length === 0) {
+            if (isSameCoinType(pool.type.xTokenType, gasCoin.type)) {
+                throw new Error(`The account doesn't hold the coin for adding liqudity: ${pool.type.xTokenType.name}, make sure you have at least one ${pool.type.xTokenType.name} coin for adding liqudity and one for paying the gas`);
+            }
+            else {
+                throw new Error(`The account doesn't hold the coin for adding liqudity: ${pool.type.xTokenType.name}`);
+            }
+        }
+        if (avaliableSwapYCoins.length === 0) {
+            if (isSameCoinType(pool.type.yTokenType, gasCoin.type)) {
+                throw new Error(`The account doesn't hold the coin for adding liqudity: ${pool.type.yTokenType.name}, make sure you have at least one ${pool.type.yTokenType.name} coin for adding liqudity and one for paying the gas`);
+            }
+            else {
+                throw new Error(`The account doesn't hold the coin for adding liqudity: ${pool.type.yTokenType.name}`);
+            }
+        }
+
+        const [swapXCoins, swapXCoinsTotalAmount] = this._getCoinsLargerThanBalance(avaliableSwapXCoins, xAmount);
+        const [swapYCoins, swapYCoinsTotalAmount] = this._getCoinsLargerThanBalance(avaliableSwapYCoins, yAmount);
+
+        if (swapXCoinsTotalAmount < xAmount) {
+            throw new Error(`The account has insuffcient balance for coin ${pool.type.xTokenType.name}, current balance: ${swapXCoinsTotalAmount}, expected: ${xAmount}`);
+        }
+        if (swapYCoinsTotalAmount < yAmount) {
+            throw new Error(`The account has insuffcient balance for coin ${pool.type.yTokenType.name}, current balance: ${swapYCoinsTotalAmount}, expected: ${yAmount}`);
         }
 
         // Entry: entry fun add_liquidity<X, Y>(pool: &mut Pool<X, Y>, x: Coin<X>, y: Coin<Y>, in_x_amount: u64, in_y_amount: u64, ctx: &mut TxContext)
@@ -400,8 +440,8 @@ export class SuiswapClient extends Client {
             typeArguments: [pool.type.xTokenType.name, pool.type.yTokenType.name],
             arguments: [
                 pool.addr,
-                swapXCoin.addr,
-                swapYCoin.addr,
+                swapXCoins.map(c => c.addr),
+                swapYCoins.map(c => c.addr),
                 xAmount.toString(),
                 yAmount.toString()
             ],
@@ -506,7 +546,7 @@ export class SuiswapClient extends Client {
             typeArguments: [pool.type.xTokenType.name, pool.type.yTokenType.name],
             arguments: [
                 pool.addr,
-                lspCoin.addr,
+                [lspCoin.addr],
                 amount.toString(),
             ],
             gasPayment: gasCoin.addr,

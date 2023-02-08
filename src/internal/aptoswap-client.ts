@@ -190,6 +190,10 @@ export class AptoswapClient extends Client {
         this._minGasPrice = minGasPrice;
     }
 
+    getFeatures = () => { 
+        return [] 
+    }
+
     getAptosClient = () => {
         return this.client;
     }

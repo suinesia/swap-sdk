@@ -12,8 +12,8 @@ export const LogLevel = {
 //     - browser: Log to the browser, we directly log since the embedded console in the browser can expand the object automatically.
 export type LogType = "console" | "browser";
 
-let DEFAULT_LOG_TYPE: LogType = "console";
-let DEFAULT_LOG_LEVEL: number = 1;
+export let DEFAULT_LOG_TYPE: LogType = "console";
+export let DEFAULT_LOG_LEVEL: number = 1;
 
 export const changeDefaultLogType = (logType: LogType) => {
     DEFAULT_LOG_TYPE = logType;
@@ -25,6 +25,10 @@ export const changeDefaultLogLevel = (logLevel: number) => {
 
 // From: https://stackoverflow.com/questions/10729276/how-can-i-get-the-full-object-in-node-jss-console-log-rather-than-object
 export const debugFormat = (s: any) => {
+    const t = typeof s;
+    if (t === "string" || t === "number" || t === "bigint") {
+        return s;
+    }
     return util.inspect(s, {showHidden: false, depth: null, colors: false});
 }
 
@@ -44,7 +48,7 @@ const log = (level: number, s: any, title: string | null = null) => {
     }
     else {
         if (title !== null) {
-            console.log(title + "\n", s);
+            console.log(`[${title}]:\n`, s);
         }
         else {
             console.log(s);

@@ -1,4 +1,4 @@
-import {  PoolInfo, CoinType, CoinInfo, AddressType, TxHashType, PositionInfo, CommonTransaction } from './common';
+import {  PoolInfo, CoinType, CoinInfo, AddressType, TxHashType, PositionInfo, CommonTransaction, EndPointType } from './common';
 import { TransactionOperation } from './transaction';
 
 export enum ClientFeatures {
@@ -10,13 +10,14 @@ export abstract class Client {
     abstract getPackageAddress: () => AddressType;
     abstract getCoinsAndPools: () => Promise<{ coins: CoinType[], pools: PoolInfo[] }>;
     abstract getPool: (poolInfo: PoolInfo) => Promise<PoolInfo | null>;
+    abstract getPosition: (positionInfo: PositionInfo, pools: PoolInfo[]) => Promise<PositionInfo | null>;
 
     abstract getAccountCoins: (accountAddr: AddressType, filter?: Array<string>) => Promise<CoinInfo[]>;
-    abstract getExplorerHrefForTxHash?: (txHash: TxHashType) => string;
+    abstract getExplorerHrefForTxHash?: (txHash: TxHashType, endPointType?: EndPointType) => string;
     abstract getPrimaryCoinType: () => CoinType;
-    abstract getTransactions: (accountAddr: AddressType, limit: number) => Promise<CommonTransaction[]>;
+    abstract getTransactions: (accountAddr: AddressType, limit: number, pools?: PoolInfo[]) => Promise<CommonTransaction[]>;
     abstract getPrimaryCoinPrice: () => Promise<number>;
-    abstract getAccountPositionInfos: (pools: PoolInfo[], coins: CoinInfo[]) => PositionInfo[];
+    abstract getAccountPositionInfos: (accountAddr: AddressType, pools?: PoolInfo[], ids?: AddressType[]) => Promise<PositionInfo[]>;
 
     abstract getGasFeePrice: () => Promise<bigint>;
     abstract getEstimateGasAmount: (t: TransactionOperation.AnyType) => bigint;

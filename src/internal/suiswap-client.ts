@@ -1,40 +1,108 @@
-import { bcs as SuiBCS, SuiJsonValue, JsonRpcProvider as SuiJsonRpcProvider, MoveCallTransaction as SuiMoveCallTransaction, SuiMoveObject, SuiObject, GetObjectDataResponse } from '@mysten/sui.js';
-import { MoveTemplateType, PoolInfo, CoinType, PoolType, CoinInfo, AddressType, TxHashType, PositionInfo, CommonTransaction, WeeklyStandardMovingAverage, uniqArrayOn, isSameCoinType, isSameCoin } from './common';
+import { bcs as SuiBCS, SuiJsonValue, JsonRpcProvider as SuiJsonRpcProvider, MoveCallTransaction as SuiMoveCallTransaction, SuiMoveObject, SuiObject, GetObjectDataResponse, Connection, getObjectFields, normalizeSuiObjectId as nid, normalizeSuiAddress as naddr, getObjectId, getMoveObjectType, EventId} from '@mysten/sui.js';
+import { SwapTransactionData, DepositTransactionData, WithdrawTransactionData, MoveTemplateType, PoolInfo, CoinType, PoolType, CoinInfo, AddressType, TxHashType, CommonTransaction, uniqArrayOn, isSameCoinType, isSameCoin, PoolBoostMultiplierData, ValuePerToken, EndPointType, PositionInfo } from './common';
 import { TransactionOperation, TransacationArgument, TransactionArgumentHelper, TransactionTypeSerializeContext } from './transaction';
 import { BigIntConstants, NumberLimit, SuiConstants } from './constants';
 import { Client, ClientFeatures } from './client';
+import { parseMoveStructTag, getTypeTagFullname } from './type-tag';
 
 export interface SuiswapClientTransactionContext {
     accountAddr: AddressType;
     gasBudget?: bigint;
 }
 
-export class SuiswapClient extends Client {
-    static DEFAULT_GAS_BUDGET = BigInt(2000);
+export type SuiswapClientObjectFilterType = "coin" | "package-related" | "packge-position" ;
 
-    static DEFAULT_SWAP_GAS_AMOUNT = BigInt(1000);
-    static DEFAULT_ADD_LIQUIDITY_GAS_AMOUNT = BigInt(1000);
-    static DEFAULT_MINT_TEST_COIN_GAS_AMOUNT = BigInt(1000);
-    static DEFAULT_REMOVE_LIQUIDITY_GAS_AMOUNT = BigInt(1000);
+export interface SuiswapClientConstructorProps {
+    packageAddr: AddressType;
+    swapCapId: AddressType;
+    tokenCapId: AddressType;
+    tokenBankId: AddressType;
+    poolRegistryId: AddressType;
+    testTokenSupplyId: AddressType;
+    owner: AddressType;
+    endpoint: string;
+};
+
+export class SuiswapClient extends Client {
+    static DEFAULT_GAS_BUDGET = BigInt(3000);
+
+    static DEFAULT_SWAP_GAS_AMOUNT = BigInt(3000);
+    static DEFAULT_ADD_LIQUIDITY_GAS_AMOUNT = BigInt(3000);
+    static DEFAULT_MINT_TEST_COIN_GAS_AMOUNT = BigInt(3000);
+    static DEFAULT_REMOVE_LIQUIDITY_GAS_AMOUNT = BigInt(3000);
     
     packageAddr: AddressType;
-    testTokenSupplyAddr: AddressType;
+    swapCapId: AddressType;
+    tokenCapId: AddressType;
+    tokenBankId: AddressType;
+    poolRegistryId: AddressType;
+    testTokenSupplyId: AddressType;
     owner: AddressType;
     endpoint: string;
     provider: SuiJsonRpcProvider;
-    
     gasFeePrice: bigint;
 
-    constructor({ packageAddr, testTokenSupplyAddr, owner, endpoint } : { packageAddr: AddressType, testTokenSupplyAddr: AddressType, owner: AddressType, endpoint: string }) {
+    cachePoolRefs: Array<{ poolType: PoolType, poolId: AddressType }> | null = null;
+
+    constructor(props : SuiswapClientConstructorProps) {
         super();
-        this.packageAddr = packageAddr;
-        this.testTokenSupplyAddr = testTokenSupplyAddr;
-        this.owner = owner;
-        this.endpoint = endpoint;
-        this.provider = new SuiJsonRpcProvider(this.endpoint);
+
+        this.packageAddr = nid(props.packageAddr);
+        this.swapCapId = nid(props.swapCapId);
+        this.tokenCapId = nid(props.tokenCapId);
+        this.tokenBankId = nid(props.tokenBankId);
+        this.poolRegistryId = nid(props.poolRegistryId);
+        this.testTokenSupplyId = nid(props.testTokenSupplyId);
+
+        this.owner =  naddr(props.owner);
+        this.endpoint = props.endpoint;
+
+        const connection = new Connection({ fullnode: props.endpoint });
+        this.provider = new SuiJsonRpcProvider(connection);
 
         // Initialize as one (before version 0.22)
         this.gasFeePrice = BigIntConstants.ONE;
+    }
+
+
+    getAccountRelatedIds = async (accountAddr: string, filter?: SuiswapClientObjectFilterType[]) => {
+        const objectAllRefs = await this.provider.getObjectsOwnedByAddress(accountAddr);
+
+        let objectRefs = objectAllRefs;
+        if (filter !== undefined && filter!.length > 0) {
+            const shouldGetCoin = (filter.find(x => (x === "coin")) !== undefined);
+            const shouldGetPackageRelated = (filter.find(x => (x === "package-related")) !== undefined);
+            const shouldGetPackagePosition = (filter.find(x => (x === "packge-position")) !== undefined);
+
+            objectRefs = objectAllRefs.filter( objectRef => {
+                const type_ = objectRef.type;
+                const typeSplits = type_.split("::");
+                const isTypePackgeRelated = nid(typeSplits[0]) == this.packageAddr;
+                const isTypeCoin = type_.startsWith("0x2::coin::Coin");
+
+                if (shouldGetCoin && isTypeCoin) {
+                    return true;
+                }
+
+                if (shouldGetPackageRelated && isTypePackgeRelated) {
+                    return true;
+                }
+
+                if (shouldGetPackagePosition && isTypePackgeRelated && typeSplits[1] === "pool" && typeSplits[2].startsWith("PoolLsp")) {
+                    return true;
+                }
+
+                return false;
+            });
+        }
+
+        return objectRefs.map(x => x.objectId);
+    }
+
+    getAccountRelatedObjects = async (accountAddr: string, filter?: SuiswapClientObjectFilterType[]) => {
+        const objectIds = await this.getAccountRelatedIds(accountAddr, filter);
+        const objects = await this.provider.getObjectBatch(objectIds);
+        return objects;
     }
 
     getFeatures = () => {
@@ -54,7 +122,12 @@ export class SuiswapClient extends Client {
 
     getPool = async (poolInfo: PoolInfo) => {
         const response = (await this.provider.getObject(poolInfo.addr));
-        return this._mapResponseToPoolInfo(response);
+        return this.mapResponseToPoolInfo(response)!;
+    }
+
+    getPosition = async (positionInfo: PositionInfo, pools: PoolInfo[]) => {
+        const response = (await this.provider.getObject(positionInfo.addr));
+        return this.mapResponseToPositionInfo(response, pools)!;
     }
 
     getSuiProvider = () => {
@@ -70,9 +143,6 @@ export class SuiswapClient extends Client {
         }
         else if (t === "remove-liqudity") {
             return SuiswapClient.DEFAULT_REMOVE_LIQUIDITY_GAS_AMOUNT;
-        }
-        else if (t === "mint-test-coin") {
-            return SuiswapClient.DEFAULT_MINT_TEST_COIN_GAS_AMOUNT;
         }
         else if (t === "raw") {
             return SuiswapClient.DEFAULT_GAS_BUDGET;
@@ -93,25 +163,17 @@ export class SuiswapClient extends Client {
     }
 
     getCoinsAndPools: (() => Promise<{ coins: CoinType[]; pools: PoolInfo[]; }>) = async () => {
-        const packageAddr = this.packageAddr;
-        const packageOwner = this.owner;
+        // Get all the pool created info
+        await this.refreshCachePoolRef(false);
+        
+        const pooldIds = await this.provider.getObjectBatch(this.cachePoolRefs!.map(x => x.poolId));
+        const poolInfos = pooldIds
+            .map((response) => this.mapResponseToPoolInfo(response))
+            .filter(x => x !== null) as PoolInfo[];
 
-        const poolInfoIds = (await this.provider.getObjectsOwnedByAddress(packageOwner))
-            .filter((obj) => { return (obj.type === `${packageAddr}::pool::PoolCreateInfo`) })
-            .map((obj) => obj.objectId);
+        const coinAllTypes = poolInfos.flatMap((poolInfo) => [poolInfo.type.xTokenType, poolInfo.type.yTokenType]);
+        const coinTypes = uniqArrayOn(coinAllTypes, coinType => coinType.name);
 
-        const poolInfoObjects = await this.provider.getObjectBatch(poolInfoIds);
-
-        const poolIds = poolInfoObjects.map((x) => {
-            const details = x.details as SuiObject;
-            const object = details.data as SuiMoveObject;
-            const poolId = object.fields["pool_id"] as string;
-            return poolId;
-        });
-
-        const poolInfos = (await this.provider.getObjectBatch(poolIds)).map((response) => this._mapResponseToPoolInfo(response)).filter(x => x !== null) as PoolInfo[];
-
-        const coinTypes = uniqArrayOn(poolInfos.flatMap((poolInfo) => [poolInfo.type.xTokenType, poolInfo.type.yTokenType]), coinType => coinType.name);
         return { coins: coinTypes, pools: poolInfos };
     };
 
@@ -141,53 +203,146 @@ export class SuiswapClient extends Client {
         return coins.filter((coin) => coin.balance > BigIntConstants.ZERO);
     }
 
-    getAccountPoolLspCoins = async (accountAddr: string) => {
-        const packageAddr = this.packageAddr;
+    getAccountPositionInfos = async (accountAddr: string, pools_?: PoolInfo[], ids?: string[] | undefined) => {
+        const pools = pools_ ?? (await this.getPools());
 
-        const coinFilter = [`${packageAddr}::pool::LSP<0x2::sui::SUI, ${packageAddr}::pool::TestToken>`];
-        const coins = (await this.getSortedAccountCoinsArray(accountAddr, coinFilter))[0];
-        return coins;
+        const objectIds = ids ?? (await this.getAccountRelatedIds(accountAddr, ["package-related"]));
+        const objects = await this.provider.getObjectBatch(objectIds);
+        const positions = objects
+            .map(x => this.mapResponseToPositionInfo(x, pools))
+            .filter(x => x !== null);
+
+        return (positions as PositionInfo[]);
     }
 
-    getAccountPositionInfos = (pools: PoolInfo[], coins: CoinInfo[]) => {
-        const packageAddr = this.packageAddr;
-        const lspPrefix = `${packageAddr}::pool::LSP`;
+    getExplorerHrefForTxHash = (txHash: TxHashType, endPointType?: EndPointType) => {
+        let suffix = "";
+        if (endPointType !== undefined) {
+            if (endPointType === "mainnet") {
+                suffix = "network=devnet";
+            }
+            else if (endPointType === "testnet") {
+                suffix = "network=testnet";
+            }
+            else if (endPointType === "devnet") {
+                suffix = "network=devnet";
+            }
+        }
+        return `https://explorer.sui.io/transactions/${txHash}` + suffix;
+    }
 
-        const lspCoins = coins.filter(coin => coin.type.name.startsWith(lspPrefix));
-        const lspPositionInfos = lspCoins
-            .map(coin => {
-                try {
-                    const template = MoveTemplateType.fromString(coin.type.name)!;
-                    const xCoinTypeName = template.typeArgs[0];
-                    const yCoinTypeName = template.typeArgs[1];
+    getTransactions = async (accountAddr: string, limit: number, pools_?: PoolInfo[]) => {
+        const pools = pools_ ?? (await this.getPools());
+        
+        const swapTxs: CommonTransaction[] =[];
+        const depositTxs: CommonTransaction[] = [];
+        const withdrawTxs: CommonTransaction[] = [];
 
-                    const poolInfos = pools.filter((p) => (p.type.xTokenType.name === xCoinTypeName && p.type.yTokenType.name === yCoinTypeName))
-                    if (poolInfos.length === 0) return null;
+        let cursor: EventId | null = null;
+        while (swapTxs.length + depositTxs.length + withdrawTxs.length < limit) {
+            const ev: any = await this.provider.getEvents({ Sender: accountAddr }, cursor, 200);
+            const events: any[] = ev.data;
 
-                    // Get the largest one
-                    let poolInfo = poolInfos[0];
-                    for (const p of poolInfos) {
-                        if (p.lspSupply > poolInfo.lspSupply) {
-                            poolInfo = p;
+            events.forEach((event) => {
+                const timestamp: number = Number(event.timestamp);
+                const eventId: string = event.txDigest;
+                const eventName: string | null = (event.event as any).moveEvent?.type ?? null;
+
+                if ((eventId === undefined) || (eventName === null) || (nid(eventName.split("::")[0]) !== this.packageAddr)) { 
+                    return
+                }
+
+                const f = (event.event as any).moveEvent?.fields;
+
+                if (f !== undefined) {
+                    // Swap event
+                    if (eventName.endsWith("::pool::SwapTokenEvent")) {
+                        const n_poolId = f.pool_id;
+                        const n_xToY = f.x_to_y;
+                        const n_inAmount = f.in_amount;
+                        const n_outAmount = f.out_amount;
+
+                        if (n_poolId !== undefined && n_xToY !== undefined && n_inAmount !== undefined && n_outAmount !== undefined) {
+                            const poolId = nid(f.pool_id);
+                            const poolInfo = pools.find(x => x.addr === poolId);
+                            const xToY = Boolean(f.x_to_y);
+                            const inAmount = BigInt(f.in_amount);
+                            const outAmount = BigInt(f.out_amount);
+                            if (poolInfo) {
+                                const data: SwapTransactionData = {
+                                    poolType: poolInfo.type,
+                                    direction: xToY ? "forward" : "reverse",
+                                    inAmount: inAmount,
+                                    outAmount: outAmount
+                                };
+                                swapTxs.push({
+                                    id: eventId,
+                                    href: this.getExplorerHrefForTxHash(eventId),
+                                    type: "swap",
+                                    success: true,
+                                    data: data,
+                                    timestamp: timestamp / 1000.0
+                                })
+                            }
                         }
                     }
+                    // Liquidity event
+                    if (eventName.endsWith("::pool::LiquidityEvent")) {
+                        const n_pool_id = f.pool_id;
+                        const n_is_added = f.is_added;
+                        const n_x_amount = f.x_amount;
+                        const n_y_amount = f.y_amount;
+                        const n_lsp_amount = f.lsp_amount;
+                        if (n_pool_id !== undefined && n_is_added !== undefined && n_x_amount !== undefined && n_y_amount !== undefined && n_lsp_amount !== undefined) {
+                            const poolId = nid(f.pool_id);
+                            const poolInfo = pools.find(x => x.addr === poolId);
+                            const p_is_added = Boolean(n_is_added);
+                            const p_x_amount = BigInt(n_x_amount);
+                            const p_y_amount = BigInt(n_y_amount);
+                            if (poolInfo) {
+                                if (p_is_added) {
+                                    const data: DepositTransactionData = {
+                                        poolType: poolInfo.type,
+                                        inAmountX: p_x_amount,
+                                        inAmountY: p_y_amount
+                                    };
+                                    depositTxs.push({
+                                        id: eventId,
+                                        href: this.getExplorerHrefForTxHash(eventId),
+                                        type: "deposit",
+                                        success: true,
+                                        data: data,
+                                        timestamp: timestamp / 1000.0
+                                    });
+                                }
+                                else {
+                                    const data: WithdrawTransactionData = {
+                                        poolType: poolInfo.type,
+                                        outAmountX: p_x_amount,
+                                        outAmountY: p_y_amount
+                                    };
+                                    withdrawTxs.push({
+                                        id: eventId,
+                                        href: this.getExplorerHrefForTxHash(eventId),
+                                        type: "withdraw",
+                                        success: true,
+                                        data: data,
+                                        timestamp: timestamp / 1000.0
+                                    })
+                                }
+                            }
+                        }
+                    }
+                }
+            });
 
-                    return new PositionInfo(poolInfo, coin);
-                } catch { }
+            if (events.length === 0 || ev.nextCursor === null || ev.nextCursor === undefined) {
+                break;
+            }
+            cursor = ev.nextCursor!;
+        }
 
-                return null;
-            })
-            .filter(x => x !== null) as PositionInfo[];
-        return lspPositionInfos;
-    }
-
-    getExplorerHrefForTxHash = (txHash: TxHashType) => {
-        return `https://explorer.devnet.sui.io/transactions/${txHash}`;
-    }
-
-    getTransactions: (accountAddr: string, limit: number) => Promise<CommonTransaction[]> = async (_accountAddr: string, _limit: number) => {
-        // TODO: SUI
-        return [];
+        return [...swapTxs, ...depositTxs, ...withdrawTxs];
     }
 
     getPrimaryCoinPrice: () => Promise<number> = async () => {
@@ -200,9 +355,6 @@ export class SuiswapClient extends Client {
         }
         else if (opt.operation === "add-liqudity") {
             return (await this._generateMoveTransaction_AddLiqudity(opt as TransactionOperation.AddLiqudity, ctx));
-        }
-        else if (opt.operation === "mint-test-coin") {
-            return (await this._generateMoveTransaction_MintTestCoin(opt as TransactionOperation.MintTestCoin, ctx));
         }
         else if (opt.operation === "remove-liqudity") {
             return (await this._generateMoveTransaction_RemoveLiquidity(opt as TransactionOperation.RemoveLiquidity, ctx));
@@ -242,7 +394,40 @@ export class SuiswapClient extends Client {
         return primaryCoinsFiltered[minimumGasCoinIndex];
     }
 
-    _mapResponseToPoolInfo = (response: GetObjectDataResponse) => {
+    isCoinInfoObject = (response: GetObjectDataResponse) => {
+        return getMoveObjectType(response)?.startsWith("0x2::coin::Coin<") ?? false;
+    }
+
+    isPoolInfoObject = (response: GetObjectDataResponse) => {
+        const type_ = getMoveObjectType(response);
+        if (!type_) { return false; }
+
+        const ts = type_.split("::");
+        const valid = nid(ts[0]) == this.packageAddr && ts[1] === "pool" && ts[2].startsWith("Pool<")
+        return valid;
+    }
+
+    isPositionInfoObject = (response: GetObjectDataResponse) => {
+        const type_ = getMoveObjectType(response);
+        if (!type_) { return false; }
+
+        const ts = type_.split("::");
+        const valid = nid(ts[0]) == this.packageAddr && ts[1] === "pool" && ts[2].startsWith("PoolLsp<")
+        return valid;
+    }
+
+    mapResponseToPoolInfo = (response: GetObjectDataResponse) => {
+        if (!this.isPoolInfoObject(response)) {
+            return null;
+        }
+
+        const EPoolTypeV2 = 100;
+        // const EPoolTypeStableSwap = 101;
+        const EFeeDirectionX = 200;
+        // const EFeeDirectionY = 201;
+        const ETokenHolderRewardTypeBalance = 210;
+        // const ETokenHolderRewardTypeAutoBackBuy = 211;
+
         try {
             const details = response.details as SuiObject;
             const typeString = (details.data as SuiMoveObject).type;
@@ -254,44 +439,136 @@ export class SuiswapClient extends Client {
             const fields = (details.data as SuiMoveObject).fields;
 
             const poolInfo = new PoolInfo({
-                type: poolType,
+                addr: nid(fields.id.id),
                 typeString: typeString,
-                addr: fields.id.id,
-
-                index: 0, // TODO: SUI
-                swapType: "v2", // TODO: SUI
-
-                x: BigInt(fields.x),
-                y: BigInt(fields.y),
-                lspSupply: BigInt(fields.lsp_supply.fields.value),
-
-                feeDirection: "X",
-
-                stableAmp: BigIntConstants.ZERO, // TODO: SUI
-                stableXScale: BigIntConstants.ZERO, // TODO: SUI
-                stableYScale: BigIntConstants.ZERO, // TODO: SUI
-
+                index: Number(fields.index),
+                type: poolType,
+                swapType: Number(fields.pool_type) === EPoolTypeV2 ? "v2" : "stable",
+                lspSupply: BigInt(fields.lsp_supply),
                 freeze: fields.freeze,
-                lastTradeTime: 0, // TODO
+                boostMultiplierData: fields.boost_multiplier_data?.map(
+                    (x: any) => ({ epoch: Number(x.fields.epoch), boostMultiplier: BigInt(x.fields.boost_multiplier) } as PoolBoostMultiplierData)
+                ),
+                feeDirection: (Number(fields.fee.fields.direction) === EFeeDirectionX) ? "X" : "Y",
+                adminFee: BigInt(fields.fee.fields.admin),
+                lpFee: BigInt(fields.fee.fields.lp),
+                thFee: BigInt(fields.fee.fields.th),
+                withdrawFee: BigInt(fields.fee.fields.withdraw),
+                x: BigInt(fields.balance.fields.x),
+                y: BigInt(fields.balance.fields.y),
+                xAdmin: BigInt(fields.balance.fields.x_admin),
+                yAdmin: BigInt(fields.balance.fields.y_admin),
+                xTh: BigInt(fields.balance.fields.x_th),
+                yTh: BigInt(fields.balance.fields.y_th),
+                stableAmp: BigInt(fields.stable.fields.amp),
+                stableXScale: BigInt(fields.stable.fields.x_scale),
+                stableYScale: BigInt(fields.stable.fields.y_scale),
+                totalTradeX: BigInt(fields.total_trade.fields.x),
+                totalTradeY: BigInt(fields.total_trade.fields.y),
+                totalTradeXLastEpoch: BigInt(fields.total_trade.fields.x_last_epoch),
+                totalTradeYLastEpoch: BigInt(fields.total_trade.fields.y_last_epoch),
+                totalTradeXCurrentEpoch: BigInt(fields.total_trade.fields.x_current_epoch),
+                totalTradeYCurrentEpoch: BigInt(fields.total_trade.fields.y_current_epoch),
 
-                totalTradeX: BigIntConstants.ZERO,
-                totalTradeY: BigIntConstants.ZERO,
-                totalTrade24hLastCaptureTime: 0,
-                totalTradeX24h: BigIntConstants.ZERO,
-                totalTradeY24h: BigIntConstants.ZERO,
+                thRewardType: Number(fields.th_reward.fields.type) == ETokenHolderRewardTypeBalance ? "Balance" : "AutoBuyBack",
+                thRewardEndEpoch: BigInt(fields.th_reward.fields.end_epoch),
+                thRewardNepoch: BigInt(fields.th_reward.fields.nepoch),
+                thRewardStartEpcoh: BigInt(fields.th_reward.fields.start_epcoh),
+                thRewardTotalStakeAmount: BigInt(fields.th_reward.fields.total_stake_amount),
+                thRewardTotalStakeBoost: BigInt(fields.th_reward.fields.total_stake_boost),
+                thRewardX: BigInt(fields.th_reward.fields.x),
+                thRewardXSupply: BigInt(fields.th_reward.fields.x_supply),
+                thRewardY: BigInt(fields.th_reward.fields.y),
+                thRewardYSupply: BigInt(fields.th_reward.fields.y_supply),
 
-                kspSma: WeeklyStandardMovingAverage.Zero(),
-
-                adminFee: BigInt(fields.admin_fee),
-                lpFee: BigInt(fields.lp_fee),
-                incentiveFee: BigIntConstants.ZERO,
-                connectFee: BigIntConstants.ZERO,
-                withdrawFee: BigIntConstants.ZERO
+                miningSpeed: BigInt(fields.mining.fields.speed),
+                miningAmpt: new ValuePerToken(
+                    BigInt(fields.mining.fields.ampt.fields.sum),
+                    BigInt(fields.mining.fields.ampt.fields.amount),
+                ),
+                miningLastEpoch: BigInt(fields.mining.fields.last_epoch),
             });
 
             return poolInfo;
         } catch (_e) {
             return null;
+        }
+    }
+
+    mapResponseToPositionInfo = (response: GetObjectDataResponse, pools: PoolInfo[]) => {
+
+        if (!this.isPositionInfoObject(response)) {
+            return null;
+        }
+
+        const type_ = getMoveObjectType(response)!;
+        const typeTag = parseMoveStructTag(type_);
+
+        // Check validation
+        if (!(nid(typeTag.address) === this.packageAddr && typeTag.module === "pool" && typeTag.name === "PoolLsp")) {
+            return null;
+        }
+
+        // Get the pool infos
+        const f = getObjectFields(response)!;
+        const addr = getObjectId(response)!;
+        const poolId = f.pool_id;
+
+        // Try to find the pool id
+        const poolInfo = pools.find(x => nid(x.addr) == nid(poolId));
+        if (!poolInfo) {
+            return null;
+        }
+
+        const value= BigInt(f.value);
+        const poolX= BigInt(f.pool_x);
+        const poolY= BigInt(f.pool_y);
+        const startEpoch= BigInt(f.start_epoch);
+        const endEpoch= BigInt(f.end_epoch);
+        const boostMultiplier= BigInt(f.boost_multiplier);
+        const poolMiningAmpt = new ValuePerToken(
+            BigInt(f.pool_mining_ampt.fields.sum), 
+            BigInt(f.pool_mining_ampt.fields.amount), 
+        );
+
+        return new PositionInfo({addr, poolInfo, value, poolX, poolY, poolMiningAmpt, startEpoch, endEpoch, boostMultiplier});
+    }
+
+    mapResponseToCoinInfo = (response: GetObjectDataResponse) => {
+
+        if (!this.isCoinInfoObject(response)) {
+            return null;
+        }
+
+        let data = ((response.details as SuiObject).data as SuiMoveObject);
+        let coin = {
+            type: { name: data.type.replace(/^0x2::coin::Coin<(.+)>$/, "$1"), network: "sui" },
+            addr: data.fields.id.id as AddressType,
+            balance: BigInt(data.fields.balance)
+        } as CoinInfo;
+        return coin;
+    }
+
+    refreshCachePoolRef = async (force: boolean) => {
+        if (force == true || this.cachePoolRefs === null) {
+            const cachePoolRefs: Array<{ poolType: PoolType, poolId: AddressType }> = [];
+            const poolDfPages = await this.provider.getDynamicFields(this.poolRegistryId);
+            const poolDfIds = poolDfPages.data.map(x => x.objectId);
+            const poolDfs = await this.provider.getObjectBatch(poolDfIds);
+            poolDfs.forEach( poolDf => {
+                const data = getObjectFields(poolDf)!;
+                const keyType = parseMoveStructTag((data.name?.type) as string);
+                const poolXType: string = getTypeTagFullname(keyType.typeParams[0]);
+                const poolYType: string = getTypeTagFullname(keyType.typeParams[1]);
+                const poolId: string = data.value?.fields.pool_id;
+                const poolType: PoolType = {
+                    xTokenType: { network: "sui", name: poolXType },
+                    yTokenType: { network: "sui", name: poolYType },
+                };
+                cachePoolRefs.push({ poolType, poolId });
+            });
+
+            this.cachePoolRefs = uniqArrayOn(cachePoolRefs, x => x.poolId);
         }
     }
 
@@ -443,7 +720,8 @@ export class SuiswapClient extends Client {
                 swapXCoins.map(c => c.addr),
                 swapYCoins.map(c => c.addr),
                 xAmount.toString(),
-                yAmount.toString()
+                yAmount.toString(),
+                opt.unlockEpoch.toString()
             ],
             gasPayment: gasCoin.addr,
             gasBudget: Number(gasBudget)
@@ -452,71 +730,9 @@ export class SuiswapClient extends Client {
         return transacation;
     }
 
-    _generateMoveTransaction_MintTestCoin = async (opt: TransactionOperation.MintTestCoin, ctx: SuiswapClientTransactionContext) => {;
-        const amount = opt.amount;
-        const packageAddr = this.getPackageAddress();
-
-        if (amount <= 0 || amount > NumberLimit.U64_MAX) {
-            throw new Error(`Invalid input amount for minting test token: ${amount}`);
-        }
-
-        // Get test tokens
-        let accountTestTokens: Array<CoinInfo> = [];
-        try {
-            accountTestTokens = (await this.getSortedAccountCoinsArray(ctx.accountAddr, [`${packageAddr}::pool::TestToken`]))[0];
-        } catch {
-            throw new Error("Network error while trying to get the test token info from account");
-        }
-
-        const accountTestToken = (accountTestTokens.length > 0) ? accountTestTokens[0] : null;
-
-        const gasBudget = ctx.gasBudget ?? SuiswapClient.DEFAULT_MINT_TEST_COIN_GAS_AMOUNT;
-        const gasFee = await this.getGasFeePrice();
-        const gas = gasBudget * gasFee;
-        const gasCoin = await this.getGasCoin(ctx.accountAddr, [], gas);
-        if (gasCoin === null) {
-            throw new Error("Cannot find the gas payment or not enough amount for paying the gas");
-        }
-
-        let transacation: SuiMoveCallTransaction = (accountTestToken === null) ? (
-            // entry fun mint_test_token(token_supply: &mut TestTokenSupply, amount: u64, recipient: address, ctx: &mut TxContext)
-            {
-                packageObjectId: packageAddr,
-                module: "pool",
-                function: "mint_test_token",
-                typeArguments: [],
-                arguments: [
-                    this.testTokenSupplyAddr,
-                    amount.toString(),
-                    ctx.accountAddr
-                ],
-                gasPayment: gasCoin.addr,
-                gasBudget: Number(gasBudget)
-            }
-        ) : (
-            // entry fun mint_test_token_merge(token_supply: &mut TestTokenSupply, amount: u64, coin: &mut Coin<TestToken>, ctx: &mut TxContext) {
-            {
-                packageObjectId: packageAddr,
-                module: "pool",
-                function: "mint_test_token_merge",
-                typeArguments: [],
-                arguments: [
-                    this.testTokenSupplyAddr,
-                    amount.toString(),
-                    accountTestToken.addr
-                ],
-                gasPayment: gasCoin.addr,
-                gasBudget: Number(gasBudget)
-            }
-        );
-
-        return transacation;
-    }
-
     _generateMoveTransaction_RemoveLiquidity = async (opt: TransactionOperation.RemoveLiquidity, ctx: SuiswapClientTransactionContext) => {
         const position = opt.positionInfo;
         const pool = position.poolInfo;
-        const lspCoin = position.lspCoin;
         const amount = position.balance();
 
         if ((amount <= 0 || amount > NumberLimit.U64_MAX)) {
@@ -532,7 +748,7 @@ export class SuiswapClient extends Client {
         const gasBudget = ctx.gasBudget ?? SuiswapClient.DEFAULT_REMOVE_LIQUIDITY_GAS_AMOUNT;
         const gasPrice = await this.getGasFeePrice();
         const gas = gasBudget * gasPrice;
-        const gasCoin = await this.getGasCoin(accountAddr, [lspCoin.addr], gas);
+        const gasCoin = await this.getGasCoin(accountAddr, [], gas);
 
         if (gasCoin === null) {
             throw new Error("Cannot find the gas payment or not enough amount for paying the gas");
@@ -546,8 +762,9 @@ export class SuiswapClient extends Client {
             typeArguments: [pool.type.xTokenType.name, pool.type.yTokenType.name],
             arguments: [
                 pool.addr,
-                [lspCoin.addr],
-                amount.toString(),
+                this.tokenBankId,
+                position.addr,
+                amount.toString()
             ],
             gasPayment: gasCoin.addr,
             gasBudget: Number(gasBudget)

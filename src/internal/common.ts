@@ -14,10 +14,12 @@ export function uniqArrayOn<T, K>(array: Array<T>, on: (t: T) => K): Array<T> {
 
 export type SwapType = "v2" | "stable";
 export type FeeDirection = "X" | "Y";
+export type TokenHolderRewardType = "Balance" | "AutoBuyBack"
 export type NetworkType = "sui" | "aptos";
 export type AddressType = string;
 export type PoolDirectionType = "forward" | "reverse";
 export type TxHashType = string;
+export type EndPointType = "mainnet" | "testnet" | "devnet";
 
 export class DemicalFormat {
     value: bigint;
@@ -138,6 +140,43 @@ export interface PoolType {
     xTokenType: CoinType;
     yTokenType: CoinType
 };
+
+export class ValuePerToken {
+    sum: bigint;
+    amount: bigint;
+
+    constructor(sum: bigint, amount: bigint) {
+        this.sum = sum;
+        this.amount = amount;
+    }
+
+    isAmountZero = () => {
+        return (this.amount == BigIntConstants.ZERO && this.sum === BigIntConstants.ZERO);
+    }
+
+    static diff = (v1: ValuePerToken, v2: ValuePerToken, mul: bigint) => {
+        const v1Zero = v1.isAmountZero();
+        const v2Zero = v2.isAmountZero();
+        const zero = BigIntConstants.ZERO;
+        const one = BigIntConstants.ONE;
+
+        const s1 = v1Zero ? zero : v1.sum;
+        const a1 = v1Zero ? one : v1.amount;
+        const s2 = v2Zero ? zero : v2.sum;
+        const a2 = v2Zero ? one : v2.amount;
+
+        const n1 = s1 * a2;
+        const n2 = s2 * a1;
+        const d = a1 * a2;
+
+        if (n1 >= n2) {
+            return (n1 - n2) * mul / d;
+        }
+        else {
+            return BigIntConstants.ZERO;
+        }
+    }
+}
 
 export const getPoolTypeUuid = (p: PoolType) => {
     return `PoolType[${getCoinTypeUuid(p.xTokenType)}-${getCoinTypeUuid(p.yTokenType)}]`
@@ -260,33 +299,68 @@ export class EPoolNotAvaliableReason {
     static Unknown = "Pool is not avaliable";
 }
 
-
 export class PositionInfo {
+    addr: AddressType;
     poolInfo: PoolInfo;
-    lspCoin: CoinInfo;
+    value: bigint;
+    poolX: bigint;
+    poolY: bigint;
+    poolMiningAmpt: ValuePerToken;
+    startEpoch: bigint;
+    endEpoch: bigint;
+    boostMultiplier: bigint;
     ratio?: DemicalFormat;
 
-    constructor(poolInfo: PoolInfo, lspCoin: CoinInfo, ratio?: DemicalFormat) {
-        this.poolInfo = poolInfo;
-        this.lspCoin = lspCoin;
-        this.ratio = ratio;
+    constructor(props: {
+        addr: AddressType,
+        poolInfo: PoolInfo,
+        value: bigint,
+        poolX: bigint,
+        poolY: bigint,
+        poolMiningAmpt: ValuePerToken,
+        startEpoch: bigint,
+        endEpoch: bigint,
+        boostMultiplier: bigint,
+        ratio?: DemicalFormat
+    }) {
+        this.addr = props.addr;
+        this.poolInfo = props.poolInfo;
+        this.value = props.value;
+        this.poolX = props.poolX;
+        this.poolY = props.poolY;
+        this.poolMiningAmpt = props.poolMiningAmpt;
+        this.startEpoch = props.startEpoch;
+        this.endEpoch = props.endEpoch;
+        this.boostMultiplier = props.boostMultiplier;
+        this.ratio = props.ratio;
     }
 
     partial: (ratio: DemicalFormat) => PositionInfo = (ratio: DemicalFormat) => {
-        return new PositionInfo(this.poolInfo, this.lspCoin, ratio);
+        return new PositionInfo({
+            addr: this.addr,
+            poolInfo: this.poolInfo,
+            value: this.value,
+            poolX: this.poolX,
+            poolY: this.poolY,
+            poolMiningAmpt: this.poolMiningAmpt,
+            startEpoch: this.startEpoch,
+            endEpoch: this.endEpoch,
+            boostMultiplier: this.boostMultiplier,
+            ratio: ratio
+        });
     }
 
     balance: () => bigint = () => {
         if (this.ratio === undefined) {
-            return this.lspCoin.balance;
+            return this.value;
         }
 
-        const bl = this.lspCoin.balance * this.ratio.value / bigintPow(BigIntConstants._1E1, this.ratio.demical);
+        const bl = this.value * this.ratio.value / bigintPow(BigIntConstants._1E1, this.ratio.demical);
         if (bl < BigIntConstants.ZERO) {
             return BigIntConstants.ZERO;
         }
-        else if (bl > this.lspCoin.balance) {
-            return this.lspCoin.balance;
+        else if (bl > this.value) {
+            return this.value;
         }
         return bl;
     }
@@ -310,93 +384,189 @@ export class PositionInfo {
     }
 
     getUuid: () => string = () => {
-        return `PositionInfo[${this.poolInfo.getUuid()}-${getCoinInfoUuid(this.lspCoin)}]`
+        return `${this.addr}`
     }
+}
+
+export interface PoolBoostMultiplierData {
+    epoch: number,
+    boostMultiplier: bigint
+}
+
+export interface PoolInfoInitializeInfo {
+    addr: string, 
+    typeString: string, 
+    index: number,
+    type: PoolType,
+    swapType: SwapType, 
+
+    lspSupply: bigint, 
+    freeze: boolean
+    
+    boostMultiplierData: Array<PoolBoostMultiplierData>,
+
+    feeDirection: FeeDirection, 
+    adminFee: bigint, 
+    lpFee: bigint, 
+    thFee: bigint,
+    withdrawFee: bigint,
+
+    x: bigint, 
+    y: bigint, 
+    xAdmin: bigint,
+    yAdmin: bigint,
+    xTh: bigint,
+    yTh: bigint,
+
+    stableAmp: bigint,
+    stableXScale: bigint, 
+    stableYScale: bigint, 
+
+    totalTradeX: bigint,
+    totalTradeY: bigint,
+    totalTradeXLastEpoch: bigint,
+    totalTradeYLastEpoch: bigint,
+    totalTradeXCurrentEpoch: bigint,
+    totalTradeYCurrentEpoch: bigint,
+
+    thRewardType: TokenHolderRewardType,
+    thRewardX: bigint,
+    thRewardY: bigint
+    thRewardXSupply: bigint,
+    thRewardYSupply: bigint,
+    thRewardNepoch: bigint,
+    thRewardStartEpcoh: bigint,
+    thRewardEndEpoch: bigint,
+    thRewardTotalStakeAmount: bigint,
+    thRewardTotalStakeBoost: bigint,
+
+    miningSpeed: bigint,
+    miningAmpt: ValuePerToken,
+    miningLastEpoch: bigint,
 }
 
 export class PoolInfo {
 
     static BPS_SCALING: bigint = BigInt("10000");
 
-    type: PoolType;
-    typeString: string;
-    addr: string;
-
+    addr: string; 
+    typeString: string; 
     index: number;
-    swapType: SwapType;
-    
-    x: bigint;
-    y: bigint;
-    lspSupply: bigint;
+    type: PoolType;
+    swapType: SwapType; 
 
-    feeDirection: FeeDirection;
+    lspSupply: bigint; 
+    freeze: boolean
+    
+    boostMultiplierData: Array<PoolBoostMultiplierData>;
+
+    feeDirection: FeeDirection; 
+    adminFee: bigint; 
+    lpFee: bigint; 
+    thFee: bigint;
+    withdrawFee: bigint;
+
+    x: bigint; 
+    y: bigint; 
+    xAdmin: bigint;
+    yAdmin: bigint;
+    xTh: bigint;
+    yTh: bigint;
 
     stableAmp: bigint;
-    stableXScale: bigint;
-    stableYScale: bigint;
-
-    freeze: boolean;
-
-    lastTradeTime: number;
+    stableXScale: bigint; 
+    stableYScale: bigint; 
 
     totalTradeX: bigint;
     totalTradeY: bigint;
-    totalTrade24hLastCaptureTime: number;
-    totalTradeX24h: bigint;
-    totalTradeY24h: bigint;
+    totalTradeXLastEpoch: bigint;
+    totalTradeYLastEpoch: bigint;
+    totalTradeXCurrentEpoch: bigint;
+    totalTradeYCurrentEpoch: bigint;
 
-    kspSma: WeeklyStandardMovingAverage;
+    thRewardType: TokenHolderRewardType;
+    thRewardX: bigint;
+    thRewardY: bigint
+    thRewardXSupply: bigint;
+    thRewardYSupply: bigint;
+    thRewardNepoch: bigint;
+    thRewardStartEpcoh: bigint;
+    thRewardEndEpoch: bigint;
+    thRewardTotalStakeAmount: bigint;
+    thRewardTotalStakeBoost: bigint;
 
-    adminFee: bigint;
-    lpFee: bigint;
-    incentiveFee: bigint;
-    connectFee: bigint;
-    withdrawFee: bigint;
+    miningSpeed: bigint;
+    miningAmpt: ValuePerToken;
+    miningLastEpoch: bigint;
 
-    _fAdmin: number;
-    _fLp: number;
+    _fAdmin: number
+    _fLp: number
+    _fTh: number;
     _aAdmin: number;
     _aLp: number;
+    _aTh: number;
 
-    constructor({ type, typeString, addr, index, swapType, x, y, lspSupply, feeDirection, stableAmp, stableXScale, stableYScale, freeze, lastTradeTime, totalTradeX, totalTradeY, totalTrade24hLastCaptureTime, totalTradeX24h, totalTradeY24h, kspSma, adminFee, lpFee, incentiveFee, connectFee, withdrawFee }: { type: PoolType, typeString: string, addr: string, index: number, swapType: SwapType, x: bigint, y: bigint, lspSupply: bigint, feeDirection: FeeDirection, stableAmp: bigint, stableXScale: bigint, stableYScale: bigint, freeze: boolean, lastTradeTime: number, totalTradeX: bigint, totalTradeY: bigint, totalTrade24hLastCaptureTime: number, totalTradeX24h: bigint, totalTradeY24h: bigint, kspSma: WeeklyStandardMovingAverage, adminFee: bigint, lpFee: bigint, incentiveFee: bigint, connectFee: bigint, withdrawFee: bigint }) {
-        this.type = type;
-        this.typeString = typeString;
-        this.addr = addr;
-        this.index = index;
-        this.swapType = swapType;
-        this.x = x;
-        this.y = y;
-        this.lspSupply = lspSupply;
-        this.feeDirection = feeDirection;
-        this.stableAmp = stableAmp;
-        this.stableXScale = stableXScale;
-        this.stableYScale = stableYScale;
-        this.freeze = freeze;
-        this.lastTradeTime = lastTradeTime;
-        this.totalTradeX = totalTradeX;
-        this.totalTradeY = totalTradeY;
-        this.totalTrade24hLastCaptureTime = totalTrade24hLastCaptureTime;
-        this.totalTradeX24h = totalTradeX24h;
-        this.totalTradeY24h = totalTradeY24h;
-        this.kspSma = kspSma;
-        this.adminFee = adminFee;
-        this.lpFee = lpFee;
-        this.incentiveFee = incentiveFee;
-        this.connectFee = connectFee;
-        this.withdrawFee = withdrawFee;
+    constructor(props: PoolInfoInitializeInfo) {
+        this.addr = props.addr;
+        this.typeString = props.typeString;
+        this.index = props.index;
+        this.type = props.type;
+        this.swapType = props.swapType;
+        this.lspSupply = props.lspSupply;
+        this.freeze = props.freeze;
+        this.boostMultiplierData = props.boostMultiplierData;
+        this.feeDirection = props.feeDirection;
+        this.adminFee = props.adminFee;
+        this.lpFee = props.lpFee;
+        this.thFee = props.thFee;
+        this.withdrawFee = props.withdrawFee;
+        this.x = props.x;
+        this.y = props.y;
+        this.xAdmin = props.xAdmin;
+        this.yAdmin = props.yAdmin;
+        this.xTh = props.xTh;
+        this.yTh = props.yTh;
+        this.stableAmp = props.stableAmp;
+        this.stableXScale = props.stableXScale;
+        this.stableYScale = props.stableYScale;
+        this.totalTradeX = props.totalTradeX;
+        this.totalTradeY = props.totalTradeY;
+        this.totalTradeXLastEpoch = props.totalTradeXLastEpoch;
+        this.totalTradeYLastEpoch = props.totalTradeYLastEpoch;
+        this.totalTradeXCurrentEpoch = props.totalTradeXCurrentEpoch;
+        this.totalTradeYCurrentEpoch = props.totalTradeYCurrentEpoch;
+        this.thRewardType = props.thRewardType;
+        this.thRewardX = props.thRewardX;
+        this.thRewardY = props.thRewardY;
+        this.thRewardXSupply = props.thRewardXSupply;
+        this.thRewardYSupply = props.thRewardYSupply;
+        this.thRewardNepoch = props.thRewardNepoch;
+        this.thRewardStartEpcoh = props.thRewardStartEpcoh;
+        this.thRewardEndEpoch = props.thRewardEndEpoch;
+        this.thRewardTotalStakeAmount = props.thRewardTotalStakeAmount;
+        this.thRewardTotalStakeBoost = props.thRewardTotalStakeBoost;
+        this.miningSpeed = props.miningSpeed;
+        this.miningAmpt = props.miningAmpt;
+        this.miningLastEpoch = props.miningLastEpoch;
 
-        this._fAdmin = Number(this.adminFee + this.connectFee) / 10000.0;
-        this._fLp = Number(this.lpFee + this.incentiveFee) / 10000.0;
+        this._fAdmin = Number(this.adminFee) / 10000.0;
+        this._fLp = Number(this.lpFee) / 10000.0;
+        this._fTh = Number(this.thFee) / 10000.0;
         this._aAdmin = 1.0 - this._fAdmin;
         this._aLp = 1.0 - this._fLp;
+        this._aTh = 1.0 - this._fTh;;
     }
 
     totalAdminFee = () => {
-        return this.adminFee + this.connectFee;
+        return this.adminFee;
     }
 
     totalLpFee = () => {
-        return this.incentiveFee + this.lpFee;
+        return this.lpFee;
+    }
+
+    totalThFee = () => {
+        return this.thFee;
     }
 
     isAvaliableForSwap = () => {
@@ -475,6 +645,7 @@ export class PoolInfo {
     }
 
     getXToYAmount = (dx: bigint) => {
+        // TODO
         const x_reserve_amt = this.x;
         const y_reserve_amt = this.y;
 
@@ -494,6 +665,7 @@ export class PoolInfo {
     }
 
     getYToXAmount = (dy: bigint) => {
+        // TODO
         const x_reserve_amt = this.x;
         const y_reserve_amt = this.y;
 
@@ -527,7 +699,9 @@ export class PoolInfo {
     }
 
     getTradeVolumne24h = (client: Client, primaryCoinPrice: number, xCoinUi: CoinUiInfo, yCoinUi: CoinUiInfo) => {
-        return this._volumeToValue(client, primaryCoinPrice, Number(this.totalTradeX24h), Number(this.totalTradeY24h), xCoinUi, yCoinUi);
+        const x = (this.totalTradeXCurrentEpoch > this.totalTradeXLastEpoch) ? this.totalTradeXCurrentEpoch : this.totalTradeXLastEpoch;
+        const y = (this.totalTradeYCurrentEpoch > this.totalTradeYLastEpoch) ? this.totalTradeYCurrentEpoch : this.totalTradeYLastEpoch;
+        return this._volumeToValue(client, primaryCoinPrice, Number(x), Number(y), xCoinUi, yCoinUi);
     }
 
     getTradeVolumne = (client: Client, primaryCoinPrice: number, xCoinUi: CoinUiInfo, yCoinUi: CoinUiInfo) => {
@@ -579,26 +753,28 @@ export class PoolInfo {
     }
 
     getApr = () => {
-        const startTime = this.totalTrade24hLastCaptureTime;
-        const endTime = this.lastTradeTime;
+        // TODO
+        return null;
+        // const startTime = this.totalTrade24hLastCaptureTime;
+        // const endTime = this.lastTradeTime;
 
-        if (this.x <= BigIntConstants.ZERO || this.y <= BigIntConstants.ZERO || endTime <= startTime) {
-            return null;
-        }
+        // if (this.x <= BigIntConstants.ZERO || this.y <= BigIntConstants.ZERO || endTime <= startTime) {
+        //     return null;
+        // }
 
-        const fee = Number(this.totalLpFee()) / 10000;
+        // const fee = Number(this.totalLpFee()) / 10000;
 
-        const fn = (tx: number, x: number, st: number, et: number) => {
-            // Note: The 0.5 here is because we add both trade for x and y when swapping x to y. But the lp fee is only taken from x
-            const tf = Number(tx) / (et - st) * 86400 * (fee * 0.5); // Total fee generate in one day
-            const apr = (tf / x) * 365;
-            return apr;
-        }
+        // const fn = (tx: number, x: number, st: number, et: number) => {
+        //     // Note: The 0.5 here is because we add both trade for x and y when swapping x to y. But the lp fee is only taken from x
+        //     const tf = Number(tx) / (et - st) * 86400 * (fee * 0.5); // Total fee generate in one day
+        //     const apr = (tf / x) * 365;
+        //     return apr;
+        // }
 
-        const aprX = fn(Number(this.totalTradeX24h), Number(this.x), startTime, endTime);
-        const aprY = fn(Number(this.totalTradeY24h), Number(this.y), startTime, endTime);
+        // const aprX = fn(Number(this.totalTradeX24h), Number(this.x), startTime, endTime);
+        // const aprY = fn(Number(this.totalTradeY24h), Number(this.y), startTime, endTime);
 
-        return (aprX + aprY) * 0.5;
+        // return (aprX + aprY) * 0.5;
 
         // const st = this.kspSma.start_time;
         // const ct = this.kspSma.current_time;

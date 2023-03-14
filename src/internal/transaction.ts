@@ -6,7 +6,6 @@ export type TransacationArgument = string | number | bigint | TransacationNormal
 export type TransactionOperationType_SwapType = "swap";
 export type TransactionOperationType_AddLiqudityType = "add-liqudity";
 export type TransactionOperationType_RemoveLiquidityType = "remove-liqudity";
-export type TransactionOperationType_MintTestCoinType = "mint-test-coin";
 export type TransactionOperationType_RawType = "raw";
 
 export interface TransactionType {
@@ -39,16 +38,12 @@ export interface TransactionOperation_AddLiqudityProps {
     pool: PoolInfo;
     xAmount: bigint;
     yAmount: bigint;
+    unlockEpoch: bigint;
 };
 
 export interface TransactionOperation_RemoveLiquidityProps {
     operation: TransactionOperationType_RemoveLiquidityType;
     positionInfo: PositionInfo
-}
-
-export interface TransactionOperation_MintTestCoinProps {
-    operation: TransactionOperationType_MintTestCoinType;
-    amount: bigint;
 }
 
 export interface TransactionOperation_Raw {
@@ -60,7 +55,6 @@ export type TransactionOperation_Any = (
     TransactionOperation_SwapProps | 
     TransactionOperation_AddLiqudityProps |
     TransactionOperation_RemoveLiquidityProps | 
-    TransactionOperation_MintTestCoinProps |
     TransactionOperation_Raw
 );
 
@@ -68,7 +62,6 @@ export type TransactionOperationType_AnyType = (
     TransactionOperationType_SwapType | 
     TransactionOperationType_AddLiqudityType |
     TransactionOperationType_RemoveLiquidityType | 
-    TransactionOperationType_MintTestCoinType |
     TransactionOperationType_RawType
 );
 
@@ -77,14 +70,12 @@ export declare namespace TransactionOperation {
         TransactionOperation_SwapProps as Swap,
         TransactionOperation_AddLiqudityProps as AddLiqudity,
         TransactionOperation_RemoveLiquidityProps as RemoveLiquidity,
-        TransactionOperation_MintTestCoinProps as MintTestCoin,
         TransactionOperation_Raw as Raw,
         TransactionOperation_Any as Any,
 
         TransactionOperationType_SwapType as SwapType,
         TransactionOperationType_AddLiqudityType as AddLiqudityType,
         TransactionOperationType_RemoveLiquidityType as RemoveLiquidityType,
-        TransactionOperationType_MintTestCoinType as MintTestCoinType,
         TransactionOperationType_RawType as RawType,
         TransactionOperationType_AnyType as AnyType
     }

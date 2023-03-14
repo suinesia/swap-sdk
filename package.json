@@ -17,7 +17,7 @@
     "docs": "typedoc --entryPoints src/index.ts",
     "build-without-clean": "tsc -p tsconfig.json",
     "build": "npm run clean && npm run build-without-clean",
-    "test": "env TS_NODE_COMPILER_OPTIONS='{\"module\": \"commonjs\", \"types\": [\"mocha\"] }' mocha -r ts-node/register 'src/**/*.test.ts'"
+    "test": "env TS_NODE_COMPILER_OPTIONS='{\"module\": \"commonjs\", \"types\": [\"node\", \"mocha\"], \"lib\": [\"ES2020\"] }' mocha -r ts-node/register 'src/**/*.test.ts'"
   },
   "devDependencies": {
     "@types/chai": "^4.3.4",
@@ -33,7 +33,7 @@
   },
   "dependencies": {
     "@manahippo/move-to-ts": "^0.4.2",
-    "@mysten/sui.js": "^0.26.0",
+    "@mysten/sui.js": "^0.29.1",
     "aptos": "^1.3.16",
     "axios": "^1.1.2"
   }

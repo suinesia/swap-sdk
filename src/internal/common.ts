@@ -634,53 +634,66 @@ export class PoolInfo {
         return price;
     }
 
-    getPriceBuy = (xDecimal: number, yDecimal: number) => {
-        // Excahnge y to x by taking fee
-        return this.getPrice(xDecimal, yDecimal) / (this._aAdmin * this._aLp)
-    }
-
-    getPriceSell = (xDecimal: number, yDecimal: number) => {
-        // Excahnge x to y by taking fee
-        return this.getPrice(xDecimal, yDecimal) * (this._aAdmin * this._aLp);
-    }
-
     getXToYAmount = (dx: bigint) => {
-        // TODO
-        const x_reserve_amt = this.x;
-        const y_reserve_amt = this.y;
+        const X = this.x;
+        const Y = this.y;
+        const feeDirection = this.feeDirection;
+        const adminFee = this.adminFee;
+        const thFee = this.thFee;
+        const lpFee = this.lpFee;
 
-        if (this.feeDirection === "X") {
-            dx = dx - dx * this.totalAdminFee() / PoolInfo.BPS_SCALING;
+        if (feeDirection == "X") {
+            const dfee = dx * adminFee / PoolInfo.BPS_SCALING
+            dx -= dfee
+
+            const dfee_th_x = dx * thFee / PoolInfo.BPS_SCALING;
+            dx -= dfee_th_x
         }
 
-        dx = dx - dx * this.totalLpFee() / PoolInfo.BPS_SCALING;
-        if (dx < BigIntConstants.ZERO) { return BigIntConstants.ZERO; }
+        const dx_lp = (dx * lpFee) / PoolInfo.BPS_SCALING
+        dx -= dx_lp;
+        
+        let dy = (this.swapType == "v2") ? this._computeAmount(dx, X, Y) : this._computeAmountStable(dx, X, Y, this.stableXScale, this.stableYScale);
 
-        let dy = (this.swapType == "v2") ? this._computeAmount(dx, x_reserve_amt, y_reserve_amt) : this._computeAmountStable(dx, x_reserve_amt, y_reserve_amt, this.stableXScale, this.stableYScale);
-        if (this.feeDirection === "Y") {
-            dy = dy - dy * this.totalAdminFee() / PoolInfo.BPS_SCALING;
+        if (feeDirection == "Y") {
+            const dfee = dy * adminFee / PoolInfo.BPS_SCALING
+            dy -= dfee
+
+            const dfee_th_y = dy * thFee / PoolInfo.BPS_SCALING
+            dy -= dfee_th_y
         }
 
         return dy;
     }
 
     getYToXAmount = (dy: bigint) => {
-        // TODO
-        const x_reserve_amt = this.x;
-        const y_reserve_amt = this.y;
+        const X = this.x;
+        const Y = this.y;
+        const feeDirection = this.feeDirection;
+        const adminFee = this.adminFee;
+        const thFee = this.thFee;
+        const lpFee = this.lpFee;
 
-        if (this.feeDirection === "Y") {
-            dy = dy - dy * this.totalAdminFee() / PoolInfo.BPS_SCALING;
+        if (feeDirection == "Y") {
+            const dfee = dy * adminFee / PoolInfo.BPS_SCALING
+            dy -= dfee
+
+            const dfee_th_y = dy * thFee / PoolInfo.BPS_SCALING
+            dy -= dfee_th_y
         }
 
-        dy = dy - dy * this.totalLpFee() / PoolInfo.BPS_SCALING;
-        if (dy < BigIntConstants.ZERO) { return BigIntConstants.ZERO; }
-
-        let dx = (this.swapType == "v2") ? this._computeAmount(dy, y_reserve_amt, x_reserve_amt) : this._computeAmountStable(dy, y_reserve_amt, x_reserve_amt, this.stableYScale, this.stableXScale);
-        if (this.feeDirection === "X") {
-            dx = dx - dx * this.totalAdminFee() / PoolInfo.BPS_SCALING;
-        }
+        const dy_lp = (dy * lpFee) / PoolInfo.BPS_SCALING
+        dy -= dy_lp
         
+        let dx = (this.swapType == "v2") ? this._computeAmount(dy, Y, X) : this._computeAmountStable(dy, Y, X, this.stableYScale, this.stableXScale);
+        if (feeDirection == "X") {
+            const dfee = dx * adminFee / PoolInfo.BPS_SCALING
+            dx -= dfee
+
+            const dfee_th_x = dx * thFee / PoolInfo.BPS_SCALING
+            dx -= dfee_th_x
+        }
+
         return dx;
     }
 

@@ -72,10 +72,24 @@ export class StableSwapHelper {
     }
 
     static computeY = (dx: bigint, x: bigint, y: bigint, A: bigint) => {
+        //console.log("b1");
         const d = StableSwapHelper.computeD(x, y, A);
-        let c = (d * d) / (BigIntConstants.TWO * (x + dx));
+        //console.log("g", dx, x, y, A, d);
+        //console.log("d*d", d * d)
+        //console.log("12", BigIntConstants.TWO * (x + dx))
+        let c = BigIntConstants.ZERO;
+        try {
+            c = (d * d) / (BigIntConstants.TWO * (x + dx));
+        } catch (e) {
+            console.log(dx, x, y, A);
+            console.log(d * d);
+            console.log(BigIntConstants.TWO * (x + dx));
+        }
+        //console.log("c1", c)
         c = (c * d) / (BigIntConstants.FOUR * A);
+        //console.log("c2", c)
         const b = (d / (BigIntConstants.TWO * A)) + (x + dx);
+        //console.log("b", b)
 
         let yy = d;
         for (let __i = 0; __i < 256; ++__i) {

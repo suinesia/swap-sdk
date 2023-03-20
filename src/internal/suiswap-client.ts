@@ -1,9 +1,10 @@
-import { bcs as SuiBCS, SuiJsonValue, JsonRpcProvider as SuiJsonRpcProvider, MoveCallTransaction as SuiMoveCallTransaction, SuiMoveObject, SuiObject, GetObjectDataResponse, Connection, getObjectFields, normalizeSuiObjectId as nid, normalizeSuiAddress as naddr, getObjectId, getMoveObjectType, EventId} from '@mysten/sui.js';
+import { bcs as SuiBCS, SuiJsonValue, JsonRpcProvider as SuiJsonRpcProvider, MoveCallTransaction as SuiMoveCallTransaction, SuiMoveObject, SuiObject, GetObjectDataResponse, Connection, getObjectFields, normalizeSuiObjectId as nid, normalizeSuiAddress as naddr, getObjectId, getMoveObjectType, EventId, normalizeSuiAddress} from '@mysten/sui.js';
 import { SwapTransactionData, DepositTransactionData, WithdrawTransactionData, MoveTemplateType, PoolInfo, CoinType, PoolType, CoinInfo, AddressType, TxHashType, CommonTransaction, uniqArrayOn, isSameCoinType, isSameCoin, PoolBoostMultiplierData, ValuePerToken, EndPointType, PositionInfo } from './common';
 import { TransactionOperation, TransacationArgument, TransactionArgumentHelper, TransactionTypeSerializeContext } from './transaction';
 import { BigIntConstants, NumberLimit, SuiConstants } from './constants';
 import { Client, ClientFeatures } from './client';
 import { parseMoveStructTag, getTypeTagFullname } from './type-tag';
+import { SuinsClient } from "@suins/toolkit"
 
 export interface SuiswapClientTransactionContext {
     accountAddr: AddressType;
@@ -39,8 +40,10 @@ export class SuiswapClient extends Client {
     testTokenSupplyId: AddressType;
     owner: AddressType;
     endpoint: string;
-    provider: SuiJsonRpcProvider;
     gasFeePrice: bigint;
+
+    provider: SuiJsonRpcProvider;
+    suiNSClient: SuinsClient;
 
     cachePoolRefs: Array<{ poolType: PoolType, poolId: AddressType }> | null = null;
 
@@ -59,11 +62,19 @@ export class SuiswapClient extends Client {
 
         const connection = new Connection({ fullnode: props.endpoint });
         this.provider = new SuiJsonRpcProvider(connection);
+        this.suiNSClient = new SuinsClient(this.provider);
 
         // Initialize as one (before version 0.22)
         this.gasFeePrice = BigIntConstants.ONE;
     }
 
+    getAccountDomain = async (accountAddr: string) => {
+        const domain = await this.suiNSClient.getName(normalizeSuiAddress(accountAddr));
+        if (domain === undefined) {
+            return null;
+        }
+        return domain;
+    }
 
     getAccountRelatedIds = async (accountAddr: string, filter?: SuiswapClientObjectFilterType[]) => {
         const objectAllRefs = await this.provider.getObjectsOwnedByAddress(accountAddr);

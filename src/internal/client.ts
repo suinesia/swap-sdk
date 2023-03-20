@@ -18,6 +18,7 @@ export abstract class Client {
     abstract getTransactions: (accountAddr: AddressType, limit: number, pools?: PoolInfo[]) => Promise<CommonTransaction[]>;
     abstract getPrimaryCoinPrice: () => Promise<number>;
     abstract getAccountPositionInfos: (accountAddr: AddressType, pools?: PoolInfo[], ids?: AddressType[]) => Promise<PositionInfo[]>;
+    abstract getAccountDomain: (accountAddr: AddressType) => Promise<string | null>;
 
     abstract getGasFeePrice: () => Promise<bigint>;
     abstract getEstimateGasAmount: (t: TransactionOperation.AnyType) => bigint;

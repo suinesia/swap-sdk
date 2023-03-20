@@ -8,4 +8,3 @@ export class Log {
         Log._log("ERROR", s);
     }
 }
-

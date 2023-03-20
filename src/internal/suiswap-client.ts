@@ -1,4 +1,4 @@
-import { bcs as SuiBCS, SuiJsonValue, JsonRpcProvider as SuiJsonRpcProvider, MoveCallTransaction as SuiMoveCallTransaction, SuiMoveObject, SuiObject, GetObjectDataResponse, Connection, getObjectFields, normalizeSuiObjectId as nid, normalizeSuiAddress as naddr, getObjectId, getMoveObjectType, EventId, normalizeSuiAddress} from '@mysten/sui.js';
+import { bcs as SuiBCS, SuiJsonValue, JsonRpcProvider as SuiJsonRpcProvider, MoveCallTransaction as SuiMoveCallTransaction, SuiMoveObject, SuiObject, GetObjectDataResponse, Connection, getObjectFields, normalizeSuiObjectId as nid, normalizeSuiAddress as naddr, getObjectId, getMoveObjectType, EventId} from '@mysten/sui.js';
 import { SwapTransactionData, DepositTransactionData, WithdrawTransactionData, MoveTemplateType, PoolInfo, CoinType, PoolType, CoinInfo, AddressType, TxHashType, CommonTransaction, uniqArrayOn, isSameCoinType, isSameCoin, PoolBoostMultiplierData, ValuePerToken, EndPointType, PositionInfo } from './common';
 import { TransactionOperation, TransacationArgument, TransactionArgumentHelper, TransactionTypeSerializeContext } from './transaction';
 import { BigIntConstants, NumberLimit, SuiConstants } from './constants';
@@ -69,11 +69,19 @@ export class SuiswapClient extends Client {
     }
 
     getAccountDomain = async (accountAddr: string) => {
-        const domain = await this.suiNSClient.getName(normalizeSuiAddress(accountAddr));
-        if (domain === undefined) {
-            return null;
+        // A naive implementation
+        const objectAllRefs = await this.provider.getObjectsOwnedByAddress(accountAddr);
+        const objectDomainRefs = objectAllRefs.filter(x => x.type.endsWith("base_registrar::RegistrationNFT"));
+        const objectDomains = await this.provider.getObjectBatch(objectDomainRefs.map(x => x.objectId));
+
+        for (const obj of objectDomains) {
+            const f = getObjectFields(obj) as any;
+            if (f.name !== undefined) {
+                return f.name.toString();
+            }
         }
-        return domain;
+
+        return null;
     }
 
     getAccountRelatedIds = async (accountAddr: string, filter?: SuiswapClientObjectFilterType[]) => {

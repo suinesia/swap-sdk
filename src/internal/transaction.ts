@@ -4,8 +4,8 @@ export type TransacationNormalizedArgument = ["address" | "string", string] | ["
 export type TransacationArgument = string | number | bigint | TransacationNormalizedArgument;
 
 export type TransactionOperationType_SwapType = "swap";
-export type TransactionOperationType_AddLiqudityType = "add-liqudity";
-export type TransactionOperationType_RemoveLiquidityType = "remove-liqudity";
+export type TransactionOperationType_AddLiquidityType = "add-liquidity";
+export type TransactionOperationType_RemoveLiquidityType = "remove-liquidity";
 export type TransactionOperationType_RawType = "raw";
 
 export interface TransactionType {
@@ -33,8 +33,8 @@ export interface TransactionOperation_SwapProps {
     minOutputAmount?: bigint;
 };
 
-export interface TransactionOperation_AddLiqudityProps {
-    operation: TransactionOperationType_AddLiqudityType;
+export interface TransactionOperation_AddLiquidityProps {
+    operation: TransactionOperationType_AddLiquidityType;
     pool: PoolInfo;
     xAmount: bigint;
     yAmount: bigint;
@@ -53,14 +53,14 @@ export interface TransactionOperation_Raw {
 
 export type TransactionOperation_Any = (
     TransactionOperation_SwapProps | 
-    TransactionOperation_AddLiqudityProps |
+    TransactionOperation_AddLiquidityProps |
     TransactionOperation_RemoveLiquidityProps | 
     TransactionOperation_Raw
 );
 
 export type TransactionOperationType_AnyType = (
     TransactionOperationType_SwapType | 
-    TransactionOperationType_AddLiqudityType |
+    TransactionOperationType_AddLiquidityType |
     TransactionOperationType_RemoveLiquidityType | 
     TransactionOperationType_RawType
 );
@@ -68,13 +68,13 @@ export type TransactionOperationType_AnyType = (
 export declare namespace TransactionOperation {
     export {
         TransactionOperation_SwapProps as Swap,
-        TransactionOperation_AddLiqudityProps as AddLiqudity,
+        TransactionOperation_AddLiquidityProps as AddLiquidity,
         TransactionOperation_RemoveLiquidityProps as RemoveLiquidity,
         TransactionOperation_Raw as Raw,
         TransactionOperation_Any as Any,
 
         TransactionOperationType_SwapType as SwapType,
-        TransactionOperationType_AddLiqudityType as AddLiqudityType,
+        TransactionOperationType_AddLiquidityType as AddLiquidityType,
         TransactionOperationType_RemoveLiquidityType as RemoveLiquidityType,
         TransactionOperationType_RawType as RawType,
         TransactionOperationType_AnyType as AnyType

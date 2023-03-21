@@ -157,10 +157,10 @@ export class SuiswapClient extends Client {
         if (t === "swap") {
             return SuiswapClient.DEFAULT_SWAP_GAS_AMOUNT;
         }
-        else if (t === "add-liqudity") {
+        else if (t === "add-liquidity") {
             return SuiswapClient.DEFAULT_ADD_LIQUIDITY_GAS_AMOUNT;
         }
-        else if (t === "remove-liqudity") {
+        else if (t === "remove-liquidity") {
             return SuiswapClient.DEFAULT_REMOVE_LIQUIDITY_GAS_AMOUNT;
         }
         else if (t === "raw") {
@@ -372,10 +372,10 @@ export class SuiswapClient extends Client {
         if (opt.operation === "swap") {
             return (await this._generateMoveTransaction_Swap(opt as TransactionOperation.Swap, ctx));
         }
-        else if (opt.operation === "add-liqudity") {
-            return (await this._generateMoveTransaction_AddLiqudity(opt as TransactionOperation.AddLiqudity, ctx));
+        else if (opt.operation === "add-liquidity") {
+            return (await this._generateMoveTransaction_AddLiquidity(opt as TransactionOperation.AddLiquidity, ctx));
         }
-        else if (opt.operation === "remove-liqudity") {
+        else if (opt.operation === "remove-liquidity") {
             return (await this._generateMoveTransaction_RemoveLiquidity(opt as TransactionOperation.RemoveLiquidity, ctx));
         }
         else if (opt.operation === "raw") {
@@ -665,13 +665,13 @@ export class SuiswapClient extends Client {
         return transacation;
     }
 
-    _generateMoveTransaction_AddLiqudity = async (opt: TransactionOperation.AddLiqudity, ctx: SuiswapClientTransactionContext) => {
+    _generateMoveTransaction_AddLiquidity = async (opt: TransactionOperation.AddLiquidity, ctx: SuiswapClientTransactionContext) => {
         const pool = opt.pool;
         const xAmount = opt.xAmount;
         const yAmount = opt.yAmount;
 
         if (((xAmount <= 0 || xAmount > NumberLimit.U64_MAX) || (yAmount <= 0 || yAmount > NumberLimit.U64_MAX))) {
-            throw new Error(`Invalid input amount for adding liqudity: ${xAmount} or minOutputAmount: ${yAmount}`);
+            throw new Error(`Invalid input amount for adding liquidity: ${xAmount} or minOutputAmount: ${yAmount}`);
         }
 
         if (pool.freeze) {
@@ -703,18 +703,18 @@ export class SuiswapClient extends Client {
 
         if (avaliableSwapXCoins.length === 0) {
             if (isSameCoinType(pool.type.xTokenType, gasCoin.type)) {
-                throw new Error(`The account doesn't hold the coin for adding liqudity: ${pool.type.xTokenType.name}, make sure you have at least one ${pool.type.xTokenType.name} coin for adding liqudity and one for paying the gas`);
+                throw new Error(`The account doesn't hold the coin for adding liquidity: ${pool.type.xTokenType.name}, make sure you have at least one ${pool.type.xTokenType.name} coin for adding liquidity and one for paying the gas`);
             }
             else {
-                throw new Error(`The account doesn't hold the coin for adding liqudity: ${pool.type.xTokenType.name}`);
+                throw new Error(`The account doesn't hold the coin for adding liquidity: ${pool.type.xTokenType.name}`);
             }
         }
         if (avaliableSwapYCoins.length === 0) {
             if (isSameCoinType(pool.type.yTokenType, gasCoin.type)) {
-                throw new Error(`The account doesn't hold the coin for adding liqudity: ${pool.type.yTokenType.name}, make sure you have at least one ${pool.type.yTokenType.name} coin for adding liqudity and one for paying the gas`);
+                throw new Error(`The account doesn't hold the coin for adding liquidity: ${pool.type.yTokenType.name}, make sure you have at least one ${pool.type.yTokenType.name} coin for adding liquidity and one for paying the gas`);
             }
             else {
-                throw new Error(`The account doesn't hold the coin for adding liqudity: ${pool.type.yTokenType.name}`);
+                throw new Error(`The account doesn't hold the coin for adding liquidity: ${pool.type.yTokenType.name}`);
             }
         }
 

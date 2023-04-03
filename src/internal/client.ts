@@ -1,4 +1,5 @@
 import {  PoolInfo, CoinType, CoinInfo, AddressType, TxHashType, PositionInfo, CommonTransaction, EndPointType } from './common';
+import { MoveType } from './move-type';
 import { TransactionOperation } from './transaction';
 
 export enum ClientFeatures {
@@ -12,7 +13,7 @@ export abstract class Client {
     abstract getPool: (poolInfo: PoolInfo) => Promise<PoolInfo | null>;
     abstract getPosition: (positionInfo: PositionInfo, pools: PoolInfo[]) => Promise<PositionInfo | null>;
 
-    abstract getAccountCoins: (accountAddr: AddressType, filter?: Array<string>) => Promise<CoinInfo[]>;
+    abstract getAccountCoins: (accountAddr: AddressType, filters?: Array<CoinType>) => Promise<CoinInfo[]>;
     abstract getExplorerHrefForTxHash?: (txHash: TxHashType, endPointType?: EndPointType) => string;
     abstract getPrimaryCoinType: () => CoinType;
     abstract getTransactions: (accountAddr: AddressType, limit: number, pools?: PoolInfo[]) => Promise<CommonTransaction[]>;
@@ -33,9 +34,9 @@ export abstract class Client {
         return (await this.getCoinsAndPools()).pools;
     }
 
-    getSortedAccountCoinsArray = async (accountAddr: AddressType, filter: Array<string>) => {
-        const coins = await this.getAccountCoins(accountAddr, filter);
+    getSortedAccountCoinsArray = async (accountAddr: AddressType, filters: Array<CoinType>) => {
+        const coins = await this.getAccountCoins(accountAddr, filters);
         coins.sort((a, b) => (a.balance < b.balance) ? 1 : (a.balance > b.balance ? -1 : 0));
-        return filter.map(ty => coins.filter(coin => coin.type.name === ty));
+        return filters.map(ty => coins.filter(coin => MoveType.equals(coin.type, ty)));
     }
 }

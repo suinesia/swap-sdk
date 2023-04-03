@@ -1,3 +1,4 @@
+export * from "./internal/move-type"
 export * from "./internal/common"
 export * from "./internal/constants"
 export * from "./internal/format"

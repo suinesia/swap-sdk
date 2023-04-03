@@ -1,7 +1,7 @@
 import { AddressType, PoolInfo, PoolDirectionType, PositionInfo } from "./common";
 
-export type TransacationNormalizedArgument = ["address" | "string", string] | ["u8" | "u16" | "u32" | "u64" | "u128", number | bigint];
-export type TransacationArgument = string | number | bigint | TransacationNormalizedArgument;
+export type TransacationNormalizedArgument = ["address" | "string" | "object", string] | ["u8" | "u64" | "u128" | "u256", number | bigint];
+export type TransacationArgument = TransacationNormalizedArgument;
 
 export type TransactionOperationType_SwapType = "swap";
 export type TransactionOperationType_AddLiquidityType = "add-liquidity";
@@ -83,33 +83,18 @@ export declare namespace TransactionOperation {
 
 export class TransactionArgumentHelper {
     static normalizeTransactionArgument = (v: TransacationArgument, ctx: TransactionTypeSerializeContext) => {
-        let vs: any = v;
-        if (typeof v === "string") {
-            vs = (v.startsWith("0x") || v === "@" || v === "$sender")  ? ["address", v] : ["string", v];
-        }
-        else if (typeof v === "number") {
-            vs = ["u64", v];
-        }
-        else if (typeof v === "bigint") {
-            vs = ["u64", v];
-        }
-        else {
-            vs = v;
-        }
-    
         // Speical hanlding for address
-        if (vs[0] === "address") {
-            let valueStr = vs[1].toString();
+        if (v[0] === "address" || v[0] === "object") {
+            let valueStr = v[1].toString();
     
             // Use @ to replace current package addr
             if (valueStr === "@") {
-               vs[1] = ctx.packageAddr;
+               v[1] = ctx.packageAddr;
             }
             else if (valueStr === "$sender") {
-                vs[1] = ctx.sender;
+                v[1] = ctx.sender;
             }
         }
-    
-        return vs as TransacationNormalizedArgument;
+        return v as TransacationNormalizedArgument;
     }
 }

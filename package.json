@@ -33,7 +33,7 @@
   },
   "dependencies": {
     "@manahippo/move-to-ts": "^0.4.2",
-    "@mysten/sui.js": "^0.29.1",
+    "@mysten/sui.js": "^0.30.0",
     "@suins/toolkit": "^1.1.1",
     "aptos": "^1.3.16",
     "axios": "^1.1.2"

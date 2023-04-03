@@ -2,6 +2,7 @@ import { formatNumeric } from "./format";
 import { BigIntConstants } from "./constants";
 import { bigintPow, StableSwapHelper } from "./utils";
 import { Client } from "./client";
+import { MoveType } from "./move-type";
 
 export function uniqArray<T>(array: Array<T>): Array<T> {
     return Array.from(new Set(array));
@@ -99,46 +100,42 @@ export class DemicalFormat {
     }
 }
 
-export interface CoinType {
-    network: NetworkType;
-    name: string;
-}
+export type CoinType = MoveType;
 
-export const getCoinTypeUuid = (c: CoinType) => {
-    return `CoinType[${c.network}-${c.name}]`;
-}
-
-export const isSameCoinType = (a: CoinType, b: CoinType) => {
-    return (a.network === b.network) && (a.name === b.name);
-}
-
-export interface CoinInfo {
+export class CoinInfo {
     type: CoinType;
     addr: AddressType;
     balance: bigint;
+    raw?: any;
+
+    static equals =(a: CoinInfo, b: CoinInfo) => {
+        return a.addr === b.addr;
+    }
+
+    constructor(p: { type: CoinType, addr: AddressType, balance: bigint, raw?: any }) {
+        this.type = p.type;
+        this.addr = p.addr;
+        this.balance = p.balance;
+        this.raw = p.raw;
+    }
+
+    uuid = () => {
+        return `CoinInfo[${this.addr}]`
+    }
 }
 
-export const isSameCoin = (a: CoinInfo, b: CoinInfo) => {
-    // Note: For sui ecosystem, we only need to check address For aptos, since all the addr are equal for single account, we need to check the reset.
-    return isSameCoinType(a.type, b.type) && (a.addr === b.addr) && (a.balance === b.balance);
-}
-
-export const getCoinInfoUuid = (c: CoinInfo) => {
-    return `CoinInfo[${getCoinTypeUuid(c.type)}-${c.addr}]`
-}
-
-export interface LSPCoinType {
-    xTokenType: CoinType;
-    yTokenType: CoinType;
-}
-
-export const getLspCoinTypeUuid = (l: LSPCoinType) => {
-    return `LSPCoinType[${getCoinTypeUuid(l.xTokenType)}-${getCoinTypeUuid(l.yTokenType)}]`
-}
-
-export interface PoolType {
+export class PoolType {
     xTokenType: CoinType;
     yTokenType: CoinType
+
+    constructor(p: { xTokenType: CoinType, yTokenType: CoinType }) {
+        this.xTokenType = p.xTokenType;
+        this.yTokenType = p.yTokenType;
+    }
+
+    uuid = () => {
+        return `PoolType<${this.xTokenType.str(), this.yTokenType.str()}>`
+    }
 };
 
 export class ValuePerToken {
@@ -175,121 +172,6 @@ export class ValuePerToken {
         else {
             return BigIntConstants.ZERO;
         }
-    }
-}
-
-export const getPoolTypeUuid = (p: PoolType) => {
-    return `PoolType[${getCoinTypeUuid(p.xTokenType)}-${getCoinTypeUuid(p.yTokenType)}]`
-}
-
-export class WeeklyStandardMovingAverage {
-    start_time: number;
-    current_time: number;
-    a0: bigint;
-    a1: bigint;
-    a2: bigint;
-    a3: bigint;
-    a4: bigint;
-    a5: bigint;
-    a6: bigint;
-    c0: bigint;
-    c1: bigint;
-    c2: bigint;
-    c3: bigint;
-    c4: bigint;
-    c5: bigint;
-    c6: bigint;
-
-    static Zero = () => {
-        return new WeeklyStandardMovingAverage(
-            0, 
-            0,
-            BigIntConstants.ZERO,
-            BigIntConstants.ZERO,
-            BigIntConstants.ZERO,
-            BigIntConstants.ZERO,
-            BigIntConstants.ZERO,
-            BigIntConstants.ZERO,
-            BigIntConstants.ZERO,
-            BigIntConstants.ZERO,
-            BigIntConstants.ZERO,
-            BigIntConstants.ZERO,
-            BigIntConstants.ZERO,
-            BigIntConstants.ZERO,
-            BigIntConstants.ZERO,
-            BigIntConstants.ZERO
-        );
-    }
-
-    constructor(start_time: number, current_time: number, a0: bigint, a1: bigint, a2: bigint, a3: bigint, a4: bigint, a5: bigint, a6: bigint, c0: bigint, c1: bigint, c2: bigint, c3: bigint, c4: bigint, c5: bigint, c6: bigint) {
-        this.start_time = start_time;
-        this.current_time = current_time;
-        this.a0 = a0;
-        this.a1 = a1;
-        this.a2 = a2;
-        this.a3 = a3;
-        this.a4 = a4;
-        this.a5 = a5;
-        this.a6 = a6;
-        this.c0 = c0;
-        this.c1 = c1;
-        this.c2 = c2;
-        this.c3 = c3;
-        this.c4 = c4;
-        this.c5 = c5;
-        this.c6 = c6;
-    }
-}
-
-export class MoveTemplateType {
-    head: string;
-    typeArgs: Array<string>;
-
-    constructor(head: string, typeArgs: string[]) {
-        this.head = head;
-        this.typeArgs = typeArgs;
-    }
-
-    static fromString(s: string): MoveTemplateType | null {
-        try {
-            // Remove empty space
-            const ms = s.match(/^(.+?)<(.*)>$/) as RegExpMatchArray;
-            const head = ms[1];
-            const inner = ms[2];
-            let typeArgs: string[] = [];
-            let braceCounter: number = 0;
-
-            let currentArg = "";
-            for (let i = 0; i < inner.length; i += 1) {
-
-                const c = inner[i];
-                const nc = (i + 1 < inner.length) ? inner[i + 1] : ""
-
-                if (c === '<') { braceCounter += 1; }
-                else if (c === '>') { braceCounter -= 1; }
-
-                if (c === ',' && braceCounter === 0) { 
-                    if (currentArg !== "") {
-                        typeArgs.push(currentArg);
-                    }
-                    currentArg = "";
-                    if (nc === ' ') {
-                        i += 1;
-                    }
-                }
-                else {
-                    currentArg += c;
-                }
-            }
-
-            if (currentArg !== "") {
-                typeArgs.push(currentArg);
-            }
-
-            return { head, typeArgs }
-        } catch {}
-
-        return null;
     }
 }
 
@@ -557,6 +439,12 @@ export class PoolInfo {
         this._aTh = 1.0 - this._fTh;;
     }
 
+    static equals = (a: PoolInfo, b: PoolInfo) => {
+        return (a.addr === b.addr) 
+            && MoveType.equals(a.type.xTokenType, b.type.xTokenType) 
+            && MoveType.equals(a.type.yTokenType, b.type.yTokenType);
+    }
+
     totalAdminFee = () => {
         return this.adminFee;
     }
@@ -585,13 +473,15 @@ export class PoolInfo {
     }
 
     getPrice = (xDecimal: number, yDecimal: number) => {
+        let value: number;
         if (this.swapType == "v2") {
-            return this._getPriceGeneral(xDecimal, yDecimal);
+            value = this._getPriceGeneral(xDecimal, yDecimal);
         }
         else {
-            return this._getPriceStable(xDecimal, yDecimal);
+            value = this._getPriceStable(xDecimal, yDecimal);
         }
-        return 0.0;
+
+        return isNaN(value) ? 0.0 : value;
     }
 
     _getPriceStable = (xDecimal: number, yDecimal: number) => {
@@ -739,13 +629,13 @@ export class PoolInfo {
         let px: number | null = null;
         let py: number | null = null;
 
-        if (isSameCoinType(primaryCoinType, this.type.xTokenType)) {
+        if (MoveType.equals(primaryCoinType, this.type.xTokenType)) {
             px = primaryCoinPrice;
         } else if (xCoinUi.extensions?.stableCoin !== undefined) {
             px = 1.0;
         }
 
-        if (isSameCoinType(primaryCoinType, this.type.yTokenType)) {
+        if (MoveType.equals(primaryCoinType, this.type.yTokenType)) {
             py = primaryCoinPrice;
         } else if (yCoinUi.extensions?.stableCoin !== undefined) {
             py = 1.0;
@@ -867,10 +757,10 @@ export class PoolInfo {
     getSwapDirection = (x: CoinType, y: CoinType) => { 
         const x_ = this.type.xTokenType;
         const y_ = this.type.yTokenType;
-        if (isSameCoinType(x, x_) && isSameCoinType(y, y_)) {
+        if (MoveType.equals(x, x_) && MoveType.equals(y, y_)) {
             return "forward" as PoolDirectionType
         }
-        else if (isSameCoinType(x, y_) && isSameCoinType(y, x_)) {
+        else if (MoveType.equals(x, y_) && MoveType.equals(y, x_)) {
             return "reverse" as PoolDirectionType;
         }
         return null;
@@ -879,7 +769,7 @@ export class PoolInfo {
     isCapableSwappingForCoins = (x: CoinType, y: CoinType) => {
         const x_ = this.type.xTokenType;
         const y_ = this.type.yTokenType;
-        return this.isInitialized() && this.isAvaliableForSwap() && (isSameCoinType(x, x_) && isSameCoinType(y, y_)) || (isSameCoinType(x, y_) && isSameCoinType(y, x_));
+        return this.isInitialized() && this.isAvaliableForSwap() && (MoveType.equals(x, x_) && MoveType.equals(y, y_)) || (MoveType.equals(x, y_) && MoveType.equals(y, x_));
     }
 
     _computeAmount = (dx: bigint, x: bigint, y: bigint) => {
@@ -894,13 +784,9 @@ export class PoolInfo {
         return dy_ / y_scale;
     }
 
-    getUuid: () => string = () => {
-        return `PoolInfo[${getPoolTypeUuid(this.type)}-${this.addr}]`;
+    uuid: () => string = () => {
+        return `PoolInfo[${(this.type.uuid())}-${this.addr}]`;
     }
-}
-
-export const isSamePool = (a: PoolInfo, b: PoolInfo) => {
-    return (a.addr === b.addr) && isSameCoinType(a.type.xTokenType, b.type.xTokenType) && isSameCoinType(a.type.yTokenType, b.type.yTokenType);
 }
 
 export interface CommonTransaction {

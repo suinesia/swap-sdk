@@ -1,17 +1,36 @@
-import { bcs as SuiBCS, SuiJsonValue, JsonRpcProvider as SuiJsonRpcProvider, MoveCallTransaction as SuiMoveCallTransaction, SuiMoveObject, SuiObject, GetObjectDataResponse, Connection, getObjectFields, normalizeSuiObjectId as nid, normalizeSuiAddress as naddr, getObjectId, getMoveObjectType, EventId} from '@mysten/sui.js';
-import { SwapTransactionData, DepositTransactionData, WithdrawTransactionData, MoveTemplateType, PoolInfo, CoinType, PoolType, CoinInfo, AddressType, TxHashType, CommonTransaction, uniqArrayOn, isSameCoinType, isSameCoin, PoolBoostMultiplierData, ValuePerToken, EndPointType, PositionInfo } from './common';
+import {
+    JsonRpcProvider,
+    Connection, getObjectFields,
+    normalizeSuiObjectId as nid, normalizeSuiAddress as naddr,
+    getObjectId, getMoveObjectType, SuiObjectDataFilter,
+    PaginatedObjectsResponse, CheckpointedObjectId, SuiObjectResponse, SuiObjectDataOptions,
+    getObjectType, PaginatedCoins, PaginatedEvents, TransactionBlock, CoinStruct, Inputs
+} from '@mysten/sui.js';
+import { DynamicFieldPage, DynamicFieldInfo } from '@mysten/sui.js/dist/types/dynamic_fields';
+import {
+    SwapTransactionData, DepositTransactionData, WithdrawTransactionData, PoolInfo, CoinType, PoolType, CoinInfo,
+    AddressType, TxHashType, CommonTransaction, uniqArrayOn, PoolBoostMultiplierData,
+    ValuePerToken, EndPointType, PositionInfo
+} from './common';
+import { MoveType } from './move-type';
 import { TransactionOperation, TransacationArgument, TransactionArgumentHelper, TransactionTypeSerializeContext } from './transaction';
 import { BigIntConstants, NumberLimit, SuiConstants } from './constants';
 import { Client, ClientFeatures } from './client';
 import { parseMoveStructTag, getTypeTagFullname } from './type-tag';
-import { SuinsClient } from "@suins/toolkit"
 
 export interface SuiswapClientTransactionContext {
     accountAddr: AddressType;
-    gasBudget?: bigint;
 }
 
-export type SuiswapClientObjectFilterType = "coin" | "package-related" | "packge-position" ;
+export type SuiswapClientObjectFilterType = "coin" | "package-related" | "packge-position";
+
+type GetGasCoinType = {
+    kind: "address",
+    addr: AddressType
+} | {
+    kind: "coins",
+    conis: CoinInfo[]
+};
 
 export interface SuiswapClientConstructorProps {
     packageAddr: AddressType;
@@ -24,6 +43,47 @@ export interface SuiswapClientConstructorProps {
     endpoint: string;
 };
 
+export interface SuiswapMoveCallTransaction {
+    package: string;
+    module: string;
+    function: string;
+    typeArguments: string[],
+    arguments: any[];
+    gasPayment: CoinInfo;
+}
+
+// const serVecAddr = (v: string[]) => {
+//     return Inputs.Pure(v, 'vector<address>');
+// }
+
+const serAddr = (v: string) => {
+    return Inputs.Pure(v, 'address');
+}
+
+const ser64 = (v: bigint | number) => {
+    return Inputs.Pure(v, 'u64');
+}
+
+const ser8 = (v: number | bigint) => {
+    return Inputs.Pure(v, 'u8');
+}
+
+const ser128 = (v: number | bigint) => {
+    return Inputs.Pure(v, 'u128');
+}
+
+const ser256 = (v: number | bigint) => {
+    return Inputs.Pure(v, 'u256');
+}
+
+// const serVec64 = (v: (bigint[] | number[])) => {
+//     return Inputs.Pure(v, 'vector<u64>');
+// }
+
+const serString = (v: string) => {
+    return Inputs.Pure(v, 'string');
+}
+
 export class SuiswapClient extends Client {
     static DEFAULT_GAS_BUDGET = BigInt(3000);
 
@@ -31,7 +91,8 @@ export class SuiswapClient extends Client {
     static DEFAULT_ADD_LIQUIDITY_GAS_AMOUNT = BigInt(3000);
     static DEFAULT_MINT_TEST_COIN_GAS_AMOUNT = BigInt(3000);
     static DEFAULT_REMOVE_LIQUIDITY_GAS_AMOUNT = BigInt(3000);
-    
+    static DEFAULT_SUI_OBJECT_OPTIONS: SuiObjectDataOptions = { showOwner: true, showContent: true, showType: true, showDisplay: true };
+
     packageAddr: AddressType;
     swapCapId: AddressType;
     tokenCapId: AddressType;
@@ -41,13 +102,10 @@ export class SuiswapClient extends Client {
     owner: AddressType;
     endpoint: string;
     gasFeePrice: bigint;
-
-    provider: SuiJsonRpcProvider;
-    suiNSClient: SuinsClient;
-
+    provider: JsonRpcProvider;
     cachePoolRefs: Array<{ poolType: PoolType, poolId: AddressType }> | null = null;
 
-    constructor(props : SuiswapClientConstructorProps) {
+    constructor(props: SuiswapClientConstructorProps) {
         super();
 
         this.packageAddr = nid(props.packageAddr);
@@ -57,22 +115,87 @@ export class SuiswapClient extends Client {
         this.poolRegistryId = nid(props.poolRegistryId);
         this.testTokenSupplyId = nid(props.testTokenSupplyId);
 
-        this.owner =  naddr(props.owner);
+        this.owner = naddr(props.owner);
         this.endpoint = props.endpoint;
 
         const connection = new Connection({ fullnode: props.endpoint });
-        this.provider = new SuiJsonRpcProvider(connection);
-        this.suiNSClient = new SuinsClient(this.provider);
+        this.provider = new JsonRpcProvider(connection);
 
         // Initialize as one (before version 0.22)
         this.gasFeePrice = BigIntConstants.ONE;
     }
 
+    getOwnedObjects = async (accountAddr: AddressType, extra?: { filter?: SuiObjectDataFilter, options?: SuiObjectDataOptions }) => {
+        const results: PaginatedObjectsResponse[] = [];
+
+        let cursor: CheckpointedObjectId | undefined = undefined;
+        while (true) {
+
+            const r: PaginatedObjectsResponse = await this.provider.getOwnedObjects({
+                owner: accountAddr,
+                cursor: cursor,
+                filter: extra?.filter,
+                options: extra?.options ?? SuiswapClient.DEFAULT_SUI_OBJECT_OPTIONS
+            });
+
+            results.push(r);
+            cursor = r.nextCursor;
+            if (!r.hasNextPage) {
+                break;
+            }
+        }
+
+        const objects = results.flatMap(x => x.data) as (SuiObjectResponse[]);
+        return objects;
+    }
+
+    getObject = async (objectId: AddressType, options?: SuiObjectDataOptions) => {
+        return (await this.provider.getObject({ id: objectId, options: options ?? SuiswapClient.DEFAULT_SUI_OBJECT_OPTIONS }));
+    }
+
+    getObjects = async (objectIds: AddressType[], options?: SuiObjectDataOptions) => {
+        const objects = await this.provider.multiGetObjects({ ids: objectIds, options: options ?? SuiswapClient.DEFAULT_SUI_OBJECT_OPTIONS });
+        return objects;
+    }
+
+    getDynamicFields = async (objectId: string) => {
+        let cursor: string | null = null;
+        const pages: DynamicFieldPage[] = [];
+
+        while (true) {
+            const page: DynamicFieldPage = await this.provider.getDynamicFields({ parentId: objectId, cursor: cursor });
+            pages.push(page);
+            cursor = page.nextCursor;
+            if (!page.hasNextPage) {
+                break;
+            }
+        }
+
+        const infos = (pages.flatMap(page => page.data) as DynamicFieldInfo[]);
+        return infos;
+    }
+
+    getCoins_ = async (accountAddr: AddressType) => {
+        const results: PaginatedCoins[] = [];
+
+        let cursor: string | null = null;
+        while (true) {
+            const r: PaginatedCoins = await this.provider.getAllCoins({ owner: accountAddr, cursor: cursor });
+            results.push(r);
+            cursor = r.nextCursor;
+            if (!r.hasNextPage) {
+                break;
+            }
+        }
+
+        const coins = results.flatMap(x => x.data);
+        return coins;
+    }
+
     getAccountDomain = async (accountAddr: string) => {
         // A naive implementation
-        const objectAllRefs = await this.provider.getObjectsOwnedByAddress(accountAddr);
-        const objectDomainRefs = objectAllRefs.filter(x => x.type.endsWith("base_registrar::RegistrationNFT"));
-        const objectDomains = await this.provider.getObjectBatch(objectDomainRefs.map(x => x.objectId));
+        const objects = await this.getOwnedObjects(accountAddr, { options: { showContent: true, showType: true } });
+        const objectDomains = objects.filter(x => (getObjectType(x)?.endsWith("base_registrar::RegistrationNFT") ?? false));
 
         for (const obj of objectDomains) {
             const f = getObjectFields(obj) as any;
@@ -84,17 +207,20 @@ export class SuiswapClient extends Client {
         return null;
     }
 
-    getAccountRelatedIds = async (accountAddr: string, filter?: SuiswapClientObjectFilterType[]) => {
-        const objectAllRefs = await this.provider.getObjectsOwnedByAddress(accountAddr);
+    getAccountRelatedObjects = async (accountAddr: string, filter?: SuiswapClientObjectFilterType[]) => {
+        const objectsAll = await this.getOwnedObjects(accountAddr);
 
-        let objectRefs = objectAllRefs;
         if (filter !== undefined && filter!.length > 0) {
             const shouldGetCoin = (filter.find(x => (x === "coin")) !== undefined);
             const shouldGetPackageRelated = (filter.find(x => (x === "package-related")) !== undefined);
             const shouldGetPackagePosition = (filter.find(x => (x === "packge-position")) !== undefined);
 
-            objectRefs = objectAllRefs.filter( objectRef => {
-                const type_ = objectRef.type;
+            const objects = objectsAll.filter(object => {
+                const type_ = getObjectType(object);
+                if (type_ === undefined) {
+                    return false;
+                }
+
                 const typeSplits = type_.split("::");
                 const isTypePackgeRelated = nid(typeSplits[0]) == this.packageAddr;
                 const isTypeCoin = type_.startsWith("0x2::coin::Coin");
@@ -102,26 +228,20 @@ export class SuiswapClient extends Client {
                 if (shouldGetCoin && isTypeCoin) {
                     return true;
                 }
-
                 if (shouldGetPackageRelated && isTypePackgeRelated) {
                     return true;
                 }
-
                 if (shouldGetPackagePosition && isTypePackgeRelated && typeSplits[1] === "pool" && typeSplits[2].startsWith("PoolLsp")) {
                     return true;
                 }
 
                 return false;
             });
+
+            return objects;
         }
 
-        return objectRefs.map(x => x.objectId);
-    }
-
-    getAccountRelatedObjects = async (accountAddr: string, filter?: SuiswapClientObjectFilterType[]) => {
-        const objectIds = await this.getAccountRelatedIds(accountAddr, filter);
-        const objects = await this.provider.getObjectBatch(objectIds);
-        return objects;
+        return objectsAll;
     }
 
     getFeatures = () => {
@@ -140,12 +260,12 @@ export class SuiswapClient extends Client {
     }
 
     getPool = async (poolInfo: PoolInfo) => {
-        const response = (await this.provider.getObject(poolInfo.addr));
+        const response = (await this.getObject(poolInfo.addr));
         return this.mapResponseToPoolInfo(response)!;
     }
 
     getPosition = async (positionInfo: PositionInfo, pools: PoolInfo[]) => {
-        const response = (await this.provider.getObject(positionInfo.addr));
+        const response = (await this.getObject(positionInfo.addr));
         return this.mapResponseToPositionInfo(response, pools)!;
     }
 
@@ -172,7 +292,7 @@ export class SuiswapClient extends Client {
     getGasFeePrice: () => Promise<bigint> = async () => {
         const provider = this.getSuiProvider();
         try {
-            const newGasPrice = await provider.getReferenceGasPrice();            
+            const newGasPrice = await provider.getReferenceGasPrice();
             this.gasFeePrice = BigInt(newGasPrice);
         }
         catch (_e) {
@@ -184,53 +304,47 @@ export class SuiswapClient extends Client {
     getCoinsAndPools: (() => Promise<{ coins: CoinType[]; pools: PoolInfo[]; }>) = async () => {
         // Get all the pool created info
         await this.refreshCachePoolRef(false);
-        
-        const pooldIds = await this.provider.getObjectBatch(this.cachePoolRefs!.map(x => x.poolId));
+
+        const pooldIds = await this.getObjects(this.cachePoolRefs!.map(x => x.poolId));
         const poolInfos = pooldIds
             .map((response) => this.mapResponseToPoolInfo(response))
             .filter(x => x !== null) as PoolInfo[];
 
         const coinAllTypes = poolInfos.flatMap((poolInfo) => [poolInfo.type.xTokenType, poolInfo.type.yTokenType]);
-        const coinTypes = uniqArrayOn(coinAllTypes, coinType => coinType.name);
+        const coinTypes = uniqArrayOn(coinAllTypes, coinType => coinType.str());
 
         return { coins: coinTypes, pools: poolInfos };
     };
 
-    getAccountCoins: (accountAddr: AddressType, filter?: string[] | undefined) => Promise<CoinInfo[]> = async (accountAddr: AddressType, filter?: Array<string>) => {
-        let coinFilter = new Set<string>();
-        if (filter !== undefined) {
-            filter.forEach((x) => { coinFilter.add(`0x2::coin::Coin<${x}>`) });
-        }
+    getAccountCoins: (accountAddr: AddressType, filters?: Array<CoinType>) => Promise<CoinInfo[]> = async (accountAddr: AddressType, filters?: Array<CoinType>) => {
+        let coinObjects = (await this.getCoins_(accountAddr));
 
-        const accountObjects = (await this.provider.getObjectsOwnedByAddress(accountAddr));
-        const accountCoinObjects = accountObjects.filter((obj) => obj.type.startsWith("0x2::coin::Coin"));
-        const accountFilteredCoinObjects = (filter === undefined) ? accountCoinObjects : accountCoinObjects.filter((obj) => coinFilter.has(obj.type));
-
-        const coinAddrs = accountFilteredCoinObjects.map(x => x.objectId);
-        const coinObjects = (await this.provider.getObjectBatch(coinAddrs)).filter(x => (x.status === "Exists"));
-
-        const coins = coinObjects.map(x => {
-            let data = ((x.details as SuiObject).data as SuiMoveObject);
+        let coins = coinObjects.map(x => {
             let coin = {
-                type: { name: data.type.replace(/^0x2::coin::Coin<(.+)>$/, "$1"), network: "sui" },
-                addr: data.fields.id.id as AddressType,
-                balance: BigInt(data.fields.balance)
+                type: MoveType.fromString(x.coinType)!,
+                addr: nid(x.coinObjectId),
+                balance: BigInt(x.balance),
+                raw: x
             } as CoinInfo;
             return coin;
         });
 
-        return coins.filter((coin) => coin.balance > BigIntConstants.ZERO);
+        coins = coins.filter((coin) => coin.balance > BigIntConstants.ZERO);
+        if (filters !== undefined) {
+            coins = coins.filter((coin) => filters.find(filter => MoveType.equals(filter, coin.type)));
+        }
+        return coins;
     }
 
     getAccountPositionInfos = async (accountAddr: string, pools_?: PoolInfo[], ids?: string[] | undefined) => {
         const pools = pools_ ?? (await this.getPools());
+        const objects = (ids === undefined)
+            ? (await this.getAccountRelatedObjects(accountAddr, ["packge-position"]))
+            : (await this.getObjects(ids));
 
-        const objectIds = ids ?? (await this.getAccountRelatedIds(accountAddr, ["package-related"]));
-        const objects = await this.provider.getObjectBatch(objectIds);
         const positions = objects
             .map(x => this.mapResponseToPositionInfo(x, pools))
             .filter(x => x !== null);
-
         return (positions as PositionInfo[]);
     }
 
@@ -252,26 +366,26 @@ export class SuiswapClient extends Client {
 
     getTransactions = async (accountAddr: string, limit: number, pools_?: PoolInfo[]) => {
         const pools = pools_ ?? (await this.getPools());
-        
-        const swapTxs: CommonTransaction[] =[];
+
+        const swapTxs: CommonTransaction[] = [];
         const depositTxs: CommonTransaction[] = [];
         const withdrawTxs: CommonTransaction[] = [];
 
-        let cursor: EventId | null = null;
+        let cursor: string | null = null;
         while (swapTxs.length + depositTxs.length + withdrawTxs.length < limit) {
-            const ev: any = await this.provider.getEvents({ Sender: accountAddr }, cursor, 200);
-            const events: any[] = ev.data;
+            const ev: PaginatedEvents = await this.provider.queryEvents({ query: { Sender: accountAddr }, cursor: cursor, limit: 200, order: 'descending' });
+            const events = ev.data;
 
             events.forEach((event) => {
-                const timestamp: number = Number(event.timestamp);
-                const eventId: string = event.txDigest;
-                const eventName: string | null = (event.event as any).moveEvent?.type ?? null;
+                const timestamp: number = Number(event.timestampMs);
+                const eventId: string = event.id.txDigest;
+                const eventName: string = event.type;
 
-                if ((eventId === undefined) || (eventName === null) || (nid(eventName.split("::")[0]) !== this.packageAddr)) { 
+                if ((nid(eventName.split("::")[0]) !== this.packageAddr)) {
                     return
                 }
 
-                const f = (event.event as any).moveEvent?.fields;
+                const f = event.parsedJson;
 
                 if (f !== undefined) {
                     // Swap event
@@ -355,13 +469,13 @@ export class SuiswapClient extends Client {
                 }
             });
 
-            if (events.length === 0 || ev.nextCursor === null || ev.nextCursor === undefined) {
+            if (ev.hasNextPage === false || events.length === 0 || ev.nextCursor === null) {
                 break;
             }
-            cursor = ev.nextCursor!;
+            cursor = ev.nextCursor?.txDigest;
         }
 
-        return [...swapTxs, ...depositTxs, ...withdrawTxs];
+        return [...swapTxs, ...depositTxs, ...withdrawTxs].sort((a, b) => b.timestamp - a.timestamp);
     }
 
     getPrimaryCoinPrice: () => Promise<number> = async () => {
@@ -393,8 +507,11 @@ export class SuiswapClient extends Client {
         }
     }
 
-    getGasCoin = async (accountAddr: AddressType, excludeCoinsAddresses: AddressType[], estimateGas: bigint) => {
-        const primaryCoins = (await this.getSortedAccountCoinsArray(accountAddr, [this.getPrimaryCoinType().name]))[0];
+    getGasCoin = async (param: GetGasCoinType, excludeCoinsAddresses: AddressType[], estimateGas: bigint) => {
+        const primaryCoins = (param.kind === "address")
+            ? (await this.getAccountCoins(param.addr, [this.getPrimaryCoinType()]))
+            : param.conis.filter(coin => MoveType.equals(coin.type, this.getPrimaryCoinType()));
+        ;
         const primaryCoinsFiltered = primaryCoins.filter(coin => excludeCoinsAddresses.indexOf(coin.addr) === -1);
 
         let minimumGasCoinIndex = -1;
@@ -413,11 +530,7 @@ export class SuiswapClient extends Client {
         return primaryCoinsFiltered[minimumGasCoinIndex];
     }
 
-    isCoinInfoObject = (response: GetObjectDataResponse) => {
-        return getMoveObjectType(response)?.startsWith("0x2::coin::Coin<") ?? false;
-    }
-
-    isPoolInfoObject = (response: GetObjectDataResponse) => {
+    isPoolInfoObject = (response: SuiObjectResponse) => {
         const type_ = getMoveObjectType(response);
         if (!type_) { return false; }
 
@@ -426,7 +539,7 @@ export class SuiswapClient extends Client {
         return valid;
     }
 
-    isPositionInfoObject = (response: GetObjectDataResponse) => {
+    isPositionInfoObject = (response: SuiObjectResponse) => {
         const type_ = getMoveObjectType(response);
         if (!type_) { return false; }
 
@@ -435,7 +548,7 @@ export class SuiswapClient extends Client {
         return valid;
     }
 
-    mapResponseToPoolInfo = (response: GetObjectDataResponse) => {
+    mapResponseToPoolInfo = (response: SuiObjectResponse) => {
         if (!this.isPoolInfoObject(response)) {
             return null;
         }
@@ -448,14 +561,20 @@ export class SuiswapClient extends Client {
         // const ETokenHolderRewardTypeAutoBackBuy = 211;
 
         try {
-            const details = response.details as SuiObject;
-            const typeString = (details.data as SuiMoveObject).type;
-            const poolTemplateType = MoveTemplateType.fromString(typeString)!;
-            const poolType: PoolType = {
-                xTokenType: { network: "sui", name: poolTemplateType.typeArgs[0] },
-                yTokenType: { network: "sui", name: poolTemplateType.typeArgs[1] },
-            };
-            const fields = (details.data as SuiMoveObject).fields;
+            const typeString = getMoveObjectType(response);
+            if (typeString === undefined) {
+                return null;
+            }
+
+            const poolTemplateType = parseMoveStructTag(typeString);
+            const poolType: PoolType = new PoolType({
+                xTokenType: MoveType.fromString(getTypeTagFullname(poolTemplateType.typeParams[0]))!,
+                yTokenType: MoveType.fromString(getTypeTagFullname(poolTemplateType.typeParams[1]))!,
+            });
+            const fields = getObjectFields(response);
+            if (fields === undefined) {
+                return null;
+            }
 
             const poolInfo = new PoolInfo({
                 addr: nid(fields.id.id),
@@ -514,8 +633,7 @@ export class SuiswapClient extends Client {
         }
     }
 
-    mapResponseToPositionInfo = (response: GetObjectDataResponse, pools: PoolInfo[]) => {
-
+    mapResponseToPositionInfo = (response: SuiObjectResponse, pools: PoolInfo[]) => {
         if (!this.isPositionInfoObject(response)) {
             return null;
         }
@@ -539,51 +657,74 @@ export class SuiswapClient extends Client {
             return null;
         }
 
-        const value= BigInt(f.value);
-        const poolX= BigInt(f.pool_x);
-        const poolY= BigInt(f.pool_y);
-        const startEpoch= BigInt(f.start_epoch);
-        const endEpoch= BigInt(f.end_epoch);
-        const boostMultiplier= BigInt(f.boost_multiplier);
+        const value = BigInt(f.value);
+        const poolX = BigInt(f.pool_x);
+        const poolY = BigInt(f.pool_y);
+        const startEpoch = BigInt(f.start_epoch);
+        const endEpoch = BigInt(f.end_epoch);
+        const boostMultiplier = BigInt(f.boost_multiplier);
         const poolMiningAmpt = new ValuePerToken(
-            BigInt(f.pool_mining_ampt.fields.sum), 
-            BigInt(f.pool_mining_ampt.fields.amount), 
+            BigInt(f.pool_mining_ampt.fields.sum),
+            BigInt(f.pool_mining_ampt.fields.amount),
         );
 
-        return new PositionInfo({addr, poolInfo, value, poolX, poolY, poolMiningAmpt, startEpoch, endEpoch, boostMultiplier});
+        return new PositionInfo({ addr, poolInfo, value, poolX, poolY, poolMiningAmpt, startEpoch, endEpoch, boostMultiplier });
     }
 
-    mapResponseToCoinInfo = (response: GetObjectDataResponse) => {
-
-        if (!this.isCoinInfoObject(response)) {
+    mapResponseToCoinInfo = (response: SuiObjectResponse) => {
+        const f = getObjectFields(response);
+        const type_ = getObjectType(response);
+        if (f === undefined || type_ === undefined || !type_.startsWith("0x2::coin::Coin<")) {
             return null;
         }
 
-        let data = ((response.details as SuiObject).data as SuiMoveObject);
         let coin = {
-            type: { name: data.type.replace(/^0x2::coin::Coin<(.+)>$/, "$1"), network: "sui" },
-            addr: data.fields.id.id as AddressType,
-            balance: BigInt(data.fields.balance)
+            type: MoveType.fromString(type_.replace(/^0x2::coin::Coin<(.+)>$/, "$1")),
+            addr: f.id.id as AddressType,
+            balance: BigInt(f.balance)
         } as CoinInfo;
         return coin;
+    }
+
+    mapMoveCallTransactionToTransactionBlock = (tr: SuiswapMoveCallTransaction) => {
+        const gasCoinRaw: CoinStruct = tr.gasPayment.raw!;
+
+        const tx = new TransactionBlock();
+        tx.setGasPayment([{ objectId: gasCoinRaw.coinObjectId, version: gasCoinRaw.version, digest: gasCoinRaw.digest }]);
+        tx.moveCall({
+            target: `${nid(tr.package)}::${tr.module}::${tr.function}`,
+            typeArguments: tr.typeArguments,
+            arguments: tr.arguments.map(x => tx.pure(x))
+        });
+
+        return tx;
     }
 
     refreshCachePoolRef = async (force: boolean) => {
         if (force == true || this.cachePoolRefs === null) {
             const cachePoolRefs: Array<{ poolType: PoolType, poolId: AddressType }> = [];
-            const poolDfPages = await this.provider.getDynamicFields(this.poolRegistryId);
-            const poolDfIds = poolDfPages.data.map(x => x.objectId);
-            const poolDfs = await this.provider.getObjectBatch(poolDfIds);
-            poolDfs.forEach( poolDf => {
-                const data = getObjectFields(poolDf)!;
-                const keyType = parseMoveStructTag((data.name?.type) as string);
-                const poolXType: string = getTypeTagFullname(keyType.typeParams[0]);
-                const poolYType: string = getTypeTagFullname(keyType.typeParams[1]);
-                const poolId: string = data.value?.fields.pool_id;
-                const poolType: PoolType = {
-                    xTokenType: { network: "sui", name: poolXType },
-                    yTokenType: { network: "sui", name: poolYType },
-                };
+
+            const poolDfInfos = await this.getDynamicFields(this.poolRegistryId);
+            const poolDfIds = poolDfInfos.map(x => x.objectId);
+            const poolDfs = await this.getObjects(poolDfIds);
+
+            poolDfs.forEach(poolDf => {
+                const f = getObjectFields(poolDf)!;
+                const keyType = parseMoveStructTag((f.name?.type) as string);
+
+                const type0 = getTypeTagFullname(keyType.typeParams[0]);
+                const type1 = getTypeTagFullname(keyType.typeParams[1]);
+
+                const poolId: string = f.value?.fields.pool_id;
+                const reverse: boolean = f.value?.fields.reverse;
+
+                const poolXType: string = (reverse ? type1 : type0);
+                const poolYType: string = (reverse ? type0 : type1);
+
+                const poolType: PoolType = new PoolType({
+                    xTokenType: MoveType.fromString(poolXType)!,
+                    yTokenType: MoveType.fromString(poolYType)!,
+                });
                 cachePoolRefs.push({ poolType, poolId });
             });
 
@@ -594,7 +735,7 @@ export class SuiswapClient extends Client {
     _getCoinsLargerThanBalance = (cs: CoinInfo[], targetBalance: bigint) => {
         const cs1 = [...cs];
         cs1.sort((a, b) => (a.balance < b.balance) ? -1 : (a.balance > b.balance ? 1 : 0));
-    
+
         const cs2: Array<CoinInfo> = [];
         let balance = BigIntConstants.ZERO;
         for (const coin of cs1) {
@@ -621,48 +762,56 @@ export class SuiswapClient extends Client {
             throw new Error(`Cannot not swap for freeze pool: ${opt.pool.addr}`);
         }
 
-        // First find the gas coin
-        const gasBudget = ctx.gasBudget ?? SuiswapClient.DEFAULT_SWAP_GAS_AMOUNT;
-        const gasFee = await this.getGasFeePrice();
-        const gas = gasBudget * gasFee;
-        const gasCoin = await this.getGasCoin(ctx.accountAddr, [], gas);
-        if (gasCoin === null) {
-            throw new Error("Cannot find the gas payment or not enough amount for paying the gas");
-        }        
-
         const swapCoinType = (opt.direction === "forward") ? opt.pool.type.xTokenType : opt.pool.type.yTokenType;
+        const swapCoins = await this.getAccountCoins(ctx.accountAddr, [swapCoinType]);
+        const swapCoinsTotalBalance = swapCoins.reduce((sum, coin) => (sum + coin.balance), BigIntConstants.ZERO);
 
-        const avaliableSwapCoins = await (await this.getAccountCoins(ctx.accountAddr, [swapCoinType.name])).filter(x => !isSameCoin(x, gasCoin));
-        if (avaliableSwapCoins.length === 0) {
-            if (isSameCoinType(gasCoin.type, swapCoinType)) {
-                throw new Error(`No avalibale coin for swapping when including gas coin, make sure you have at least two coins`);
-            }
-            else {
-                throw new Error(`No avaliable coin for swapping`);
-            }
-        }
-
-        const [swapCoins, swapCoinsTotalBalance] = this._getCoinsLargerThanBalance(avaliableSwapCoins, opt.amount);
         if (swapCoinsTotalBalance < opt.amount) {
             throw new Error(`Not enough balance for swapping, max amount: ${swapCoinsTotalBalance}, target amount: ${opt.amount}`);
         }
 
-        let transacation: SuiMoveCallTransaction = {
-            packageObjectId: this.getPackageAddress(),
-            module: "pool",
-            function: (opt.direction == "forward") ? "swap_x_to_y" : "swap_y_to_x",
-            typeArguments: [opt.pool.type.xTokenType.name, opt.pool.type.yTokenType.name],
-            arguments: [
-                opt.pool.addr,
-                swapCoins.map(x => x.addr),
-                opt.amount.toString(),
-                opt.minOutputAmount?.toString() ?? "0"
-            ],
-            gasPayment: gasCoin.addr,
-            gasBudget: Number(gasBudget)
-        };
+        const pacakge_ = this.getPackageAddress();
+        const module_ = "pool";
+        const function_ = (opt.direction == "forward") ? "swap_x_to_y" : "swap_y_to_x";
 
-        return transacation;
+        // Check whether its SUI coin
+        const isSui = MoveType.equals(swapCoinType, this.getPrimaryCoinType())
+
+        const tx = new TransactionBlock();
+
+        // Special handling if sui coin is used for input transaction
+        if (isSui) {
+            tx.setGasPayment(swapCoins.map(c => {
+                const cs: CoinStruct = c.raw!;
+                return { version: cs.version, digest: cs.digest, objectId: cs.coinObjectId }
+            }));
+            const [inCoin] = tx.splitCoins(tx.gas, [tx.pure(opt.amount)]);
+
+            tx.moveCall({
+                target: `${pacakge_}::${module_}::${function_}`,
+                typeArguments: [opt.pool.type.xTokenType.str(), opt.pool.type.yTokenType.str()],
+                arguments: [
+                    tx.object(opt.pool.addr),
+                    tx.makeMoveVec({ objects: [inCoin] }),
+                    tx.pure(ser64(opt.amount)),
+                    tx.pure(ser64(opt.minOutputAmount ?? 0))
+                ]
+            })
+        }
+        else {
+            tx.moveCall({
+                target: `${pacakge_}::${module_}::${function_}`,
+                typeArguments: [opt.pool.type.xTokenType.str(), opt.pool.type.yTokenType.str()],
+                arguments: [
+                    tx.object(opt.pool.addr),
+                    tx.makeMoveVec({ objects: swapCoins.map(x => tx.object(x.addr)) }),
+                    tx.pure(ser64(opt.amount)),
+                    tx.pure(ser64(opt.minOutputAmount ?? 0))
+                ]
+            })
+        }
+
+        return tx;
     }
 
     _generateMoveTransaction_AddLiquidity = async (opt: TransactionOperation.AddLiquidity, ctx: SuiswapClientTransactionContext) => {
@@ -678,75 +827,99 @@ export class SuiswapClient extends Client {
             throw new Error(`Cannot not swap for freeze pool: ${pool.addr}`);
         }
 
-        // Temporarily comment due to Suiet bug
-        // if ((await this.isConnected()) == false) {
-        //     throw new Error("Wallet is not connected");
-        // }
-
         const accountAddr = ctx.accountAddr;
+        const coins = await this.getAccountCoins(accountAddr, [pool.type.xTokenType, pool.type.yTokenType]);
+
         if (accountAddr === null) {
             throw new Error("Cannot get the current account address from wallet")
         }
 
-        const gasBudget = ctx.gasBudget ?? SuiswapClient.DEFAULT_ADD_LIQUIDITY_GAS_AMOUNT;
-        const gasFee = await this.getGasFeePrice();
-        const gas = gasBudget * gasFee;
-        const gasCoin = await this.getGasCoin(accountAddr, [], gas);
-        if (gasCoin === null) {
-            throw new Error("Cannot find the gas payment or not enough amount for paying the gas");
-        }
-
         // Getting the both x coin and y coin
-        const avaliableSwapCoins = await this.getAccountCoins(accountAddr, [pool.type.xTokenType.name, pool.type.yTokenType.name]);
-        const avaliableSwapXCoins = avaliableSwapCoins.filter(c => isSameCoinType(c.type, pool.type.xTokenType) && !isSameCoin(c, gasCoin));
-        const avaliableSwapYCoins = avaliableSwapCoins.filter(c => isSameCoinType(c.type, pool.type.yTokenType) && !isSameCoin(c, gasCoin));
+        const swapXCoins = coins.filter(c => MoveType.equals(c.type, pool.type.xTokenType));
+        const swapYCoins = coins.filter(c => MoveType.equals(c.type, pool.type.yTokenType));
 
-        if (avaliableSwapXCoins.length === 0) {
-            if (isSameCoinType(pool.type.xTokenType, gasCoin.type)) {
-                throw new Error(`The account doesn't hold the coin for adding liquidity: ${pool.type.xTokenType.name}, make sure you have at least one ${pool.type.xTokenType.name} coin for adding liquidity and one for paying the gas`);
-            }
-            else {
-                throw new Error(`The account doesn't hold the coin for adding liquidity: ${pool.type.xTokenType.name}`);
-            }
+        if (swapXCoins.length === 0) {
+            throw new Error(`The account doesn't hold the coin for adding liquidity: ${pool.type.xTokenType.str()}`);
         }
-        if (avaliableSwapYCoins.length === 0) {
-            if (isSameCoinType(pool.type.yTokenType, gasCoin.type)) {
-                throw new Error(`The account doesn't hold the coin for adding liquidity: ${pool.type.yTokenType.name}, make sure you have at least one ${pool.type.yTokenType.name} coin for adding liquidity and one for paying the gas`);
-            }
-            else {
-                throw new Error(`The account doesn't hold the coin for adding liquidity: ${pool.type.yTokenType.name}`);
-            }
+        if (swapYCoins.length === 0) {
+            throw new Error(`The account doesn't hold the coin for adding liquidity: ${pool.type.yTokenType.str()}`);
         }
 
-        const [swapXCoins, swapXCoinsTotalAmount] = this._getCoinsLargerThanBalance(avaliableSwapXCoins, xAmount);
-        const [swapYCoins, swapYCoinsTotalAmount] = this._getCoinsLargerThanBalance(avaliableSwapYCoins, yAmount);
+        const swapXCoinsTotalAmount = swapXCoins.reduce((sum, coin) => sum + coin.balance, BigIntConstants.ZERO);
+        const swapYCoinsTotalAmount = swapYCoins.reduce((sum, coin) => sum + coin.balance, BigIntConstants.ZERO);
 
         if (swapXCoinsTotalAmount < xAmount) {
-            throw new Error(`The account has insuffcient balance for coin ${pool.type.xTokenType.name}, current balance: ${swapXCoinsTotalAmount}, expected: ${xAmount}`);
+            throw new Error(`The account has insuffcient balance for coin ${pool.type.xTokenType.str()}, current balance: ${swapXCoinsTotalAmount}, expected: ${xAmount}`);
         }
         if (swapYCoinsTotalAmount < yAmount) {
-            throw new Error(`The account has insuffcient balance for coin ${pool.type.yTokenType.name}, current balance: ${swapYCoinsTotalAmount}, expected: ${yAmount}`);
+            throw new Error(`The account has insuffcient balance for coin ${pool.type.yTokenType.str()}, current balance: ${swapYCoinsTotalAmount}, expected: ${yAmount}`);
         }
 
-        // Entry: entry fun add_liquidity<X, Y>(pool: &mut Pool<X, Y>, x: Coin<X>, y: Coin<Y>, in_x_amount: u64, in_y_amount: u64, ctx: &mut TxContext)
-        let transacation: SuiMoveCallTransaction = {
-            packageObjectId: this.getPackageAddress(),
-            module: "pool",
-            function: "add_liquidity",
-            typeArguments: [pool.type.xTokenType.name, pool.type.yTokenType.name],
-            arguments: [
-                pool.addr,
-                swapXCoins.map(c => c.addr),
-                swapYCoins.map(c => c.addr),
-                xAmount.toString(),
-                yAmount.toString(),
-                opt.unlockEpoch.toString()
-            ],
-            gasPayment: gasCoin.addr,
-            gasBudget: Number(gasBudget)
-        };
+        const isXSui = MoveType.equals(pool.type.xTokenType, this.getPrimaryCoinType());
+        const isYSui = MoveType.equals(pool.type.yTokenType, this.getPrimaryCoinType());
 
-        return transacation;
+        const tx = new TransactionBlock();
+        // let txXCoins: any = tx.makeMoveVec({ objects: swapXCoins.map(c => tx.object(c.addr)) });
+        // let txYCoins: any = tx.makeMoveVec({ objects: swapYCoins.map(c => tx.object(c.addr)) });
+
+        // Special case when X is sui
+        if (isXSui) {
+            tx.setGasPayment(swapXCoins.map(c => {
+                const cs: CoinStruct = c.raw!;
+                return { version: cs.version, digest: cs.digest, objectId: cs.coinObjectId }
+            }));
+            const [cSplit] = tx.splitCoins(tx.gas, [tx.pure(ser64(xAmount))]);
+
+            tx.moveCall({
+                target: `${this.getPackageAddress()}::pool::add_liquidity`,
+                typeArguments: [pool.type.xTokenType.str(), pool.type.yTokenType.str()],
+                arguments: [
+                    tx.object(pool.addr),
+                    tx.makeMoveVec({ objects: [ cSplit ]}),
+                    tx.makeMoveVec({ objects: swapYCoins.map(c => tx.object(c.addr))}),
+                    tx.pure(ser64(xAmount)),
+                    tx.pure(ser64(yAmount)),
+                    tx.pure(ser64(opt.unlockEpoch))
+                ],
+            });
+        }
+        // Special case when Y is sui
+        else if (isYSui) {
+            tx.setGasPayment(swapYCoins.map(c => {
+                const cs: CoinStruct = c.raw!;
+                return { version: cs.version, digest: cs.digest, objectId: cs.coinObjectId }
+            }));
+            const [cSplit] = tx.splitCoins(tx.gas, [tx.pure(ser64(yAmount))]);
+
+            tx.moveCall({
+                target: `${this.getPackageAddress()}::pool::add_liquidity`,
+                typeArguments: [pool.type.xTokenType.str(), pool.type.yTokenType.str()],
+                arguments: [
+                    tx.object(pool.addr),
+                    tx.makeMoveVec({ objects: swapXCoins.map(c => tx.object(c.addr))}),
+                    tx.makeMoveVec({ objects: [ cSplit ]}),
+                    tx.pure(ser64(xAmount)),
+                    tx.pure(ser64(yAmount)),
+                    tx.pure(ser64(opt.unlockEpoch))
+                ],
+            });
+        }
+        else {
+            tx.moveCall({
+                target: `${this.getPackageAddress()}::pool::add_liquidity`,
+                typeArguments: [pool.type.xTokenType.str(), pool.type.yTokenType.str()],
+                arguments: [
+                    tx.object(pool.addr),
+                    tx.makeMoveVec({ objects: swapXCoins.map(c => tx.object(c.addr))}),
+                    tx.makeMoveVec({ objects: swapYCoins.map(c => tx.object(c.addr))}),
+                    tx.pure(ser64(xAmount)),
+                    tx.pure(ser64(yAmount)),
+                    tx.pure(ser64(opt.unlockEpoch))
+                ],
+            });
+        }
+
+        return tx;
     }
 
     _generateMoveTransaction_RemoveLiquidity = async (opt: TransactionOperation.RemoveLiquidity, ctx: SuiswapClientTransactionContext) => {
@@ -764,128 +937,75 @@ export class SuiswapClient extends Client {
         }
 
         // Getting the both x coin and y coin
-        const gasBudget = ctx.gasBudget ?? SuiswapClient.DEFAULT_REMOVE_LIQUIDITY_GAS_AMOUNT;
-        const gasPrice = await this.getGasFeePrice();
-        const gas = gasBudget * gasPrice;
-        const gasCoin = await this.getGasCoin(accountAddr, [], gas);
-
-        if (gasCoin === null) {
-            throw new Error("Cannot find the gas payment or not enough amount for paying the gas");
-        }
 
         // Entry: entry fun remove_liquidity<X, Y>(pool: &mut Pool<X, Y>, lsp: Coin<LSP<X, Y>>, lsp_amount: u64, ctx: &mut TxContext)
-        let transacation: SuiMoveCallTransaction = {
-            packageObjectId: this.packageAddr,
-            module: "pool",
-            function: "remove_liquidity",
-            typeArguments: [pool.type.xTokenType.name, pool.type.yTokenType.name],
+        const tx = new TransactionBlock();
+        tx.moveCall({
+            target: `${this.packageAddr}::pool::remove_liquidity`,
+            typeArguments: [pool.type.xTokenType.str(), pool.type.yTokenType.str()],
             arguments: [
-                pool.addr,
-                this.tokenBankId,
-                position.addr,
-                amount.toString()
-            ],
-            gasPayment: gasCoin.addr,
-            gasBudget: Number(gasBudget)
-        };
+                tx.object(pool.addr),
+                tx.object(this.tokenBankId),
+                tx.object(position.addr),
+                tx.pure(ser64(amount))
+            ]
+        });
 
-        return transacation;
+        return tx;
     }
 
-    _generateMoveTransaction_Raw = async (opt: TransactionOperation.Raw, ctx: SuiswapClientTransactionContext) => { 
+    _generateMoveTransaction_Raw = async (opt: TransactionOperation.Raw, ctx: SuiswapClientTransactionContext) => {
         const accountAddr = ctx.accountAddr;
+        const tCtx: TransactionTypeSerializeContext = { packageAddr: this.packageAddr, sender: accountAddr };
 
+        // Construct the transaction block
+        const tx = new TransactionBlock();
 
         // Serialize the transaction
         const t = opt.transaction;
-        const tCtx: TransactionTypeSerializeContext = { packageAddr: this.packageAddr, sender: accountAddr };
         const sp = t.function.split("::");
-        const packageObjectId = sp[0].replace("@", this.packageAddr);
+        const package_ = nid(sp[0].replace("@", this.packageAddr));
         const module_ = sp[1];
         const function_ = sp[2];
         const typeArguments = t.type_arguments.map(ty => ty.replace("@", this.packageAddr));
-        const arguments_ = t.arguments.map(arg => ( SuiSerializer.toJsonArgument(arg, tCtx) as SuiJsonValue) );
+        const arguments_: any[] = t.arguments.map((arg: TransacationArgument) => {
+            const vs = TransactionArgumentHelper.normalizeTransactionArgument(arg, tCtx);
 
-        const gasBudget = ctx.gasBudget ?? SuiswapClient.DEFAULT_GAS_BUDGET;
-        const gasFee = await this.getGasFeePrice();
-        const gas = gasBudget * gasFee;
-        
-        const gasCoin = await this.getGasCoin(accountAddr, [], gas);
-        if (gasCoin === null) {
-            throw new Error("Cannot find the gas payment or not enough amount for paying the gas");
-        }
+            const tag = vs[0];
+            const value = vs[1];
 
-        let transacation: SuiMoveCallTransaction = {
-            packageObjectId, 
-            module: module_, 
-            function: function_, 
-            typeArguments, 
-            arguments: arguments_, 
-            gasBudget: Number(gasBudget),
-            gasPayment: gasCoin.addr
-        }
-
-        return transacation;
-    }
-}
-
-
-class SuiSerializer {
-    static _SERIALIZE_TRANSACTION_HAS_PREPARED = false;
-
-    static _normalizArgument = (v: TransacationArgument, ctx: TransactionTypeSerializeContext) => {
-        if (SuiSerializer._SERIALIZE_TRANSACTION_HAS_PREPARED === false) {
-            SuiSerializer._SERIALIZE_TRANSACTION_HAS_PREPARED = true;
-            if (!SuiBCS.hasType(Object.getPrototypeOf(SuiBCS) .ADDRESS)) {
-                SuiBCS.registerAddressType(Object.getPrototypeOf(SuiBCS).ADDRESS, 20);
+            if (tag === "object") {
+                return tx.object(value.toString())
             }
-        }
-        return TransactionArgumentHelper.normalizeTransactionArgument(v, ctx);
-    }
+            else if (tag === "address") {
+                return tx.pure(serAddr(value.toString()));
+            }
+            else if (tag === "string") {
+                return tx.pure(serString(value.toString()));
+            }
+            else if (tag === "u8") {
+                return tx.pure(ser8(value as any));
+            }
+            else if (tag === "u64") {
+                return tx.pure(ser64(value as any));
+            }
+            else if (tag === "u128") {
+                return tx.pure(ser128(value as any));
+            }
+            else if (tag === "u256") {
+                return tx.pure(ser256(value as any));
+            }
 
-    static toBCSArgument = (v: TransacationArgument, ctx: TransactionTypeSerializeContext) => {
-        const vs = SuiSerializer._normalizArgument(v, ctx);
-    
-        const tag = vs[0];
-        const value = vs[1] as (string | number | bigint);
-        if (tag === "address") {    
-            return SuiBCS.ser(Object.getPrototypeOf(SuiBCS).ADDRESS, value.toString()).toBytes();
-        }
-        else if (tag === "string") {
-            return SuiBCS.ser(Object.getPrototypeOf(SuiBCS).STRING, value.toString()).toBytes();
-        }
-        else if (tag === "u8") {
-            return SuiBCS.ser(Object.getPrototypeOf(SuiBCS).U8, value).toBytes();
-        }
-        else if (tag === "u16") {
-            throw Error("Sui doesn't support u16 type bcs serialization");
-        }
-        else if (tag === "u32") {
-            return SuiBCS.ser(Object.getPrototypeOf(SuiBCS).U32, value).toBytes();
-        }
-        else if (tag === "u64") {
-            return SuiBCS.ser(Object.getPrototypeOf(SuiBCS).U64, value).toBytes();
-        }
-        else if (tag === "u128") {
-            return SuiBCS.ser(Object.getPrototypeOf(SuiBCS).U128, value).toBytes();
-        }
-        throw Error(`[SuiSerializer] BCS serialize error on argument: ${v}`)
-    }
+            // Should never ends here
+            return null;
+        });
 
-    static toJsonArgument = (v: TransacationArgument, ctx: TransactionTypeSerializeContext) => {
-        const vs = SuiSerializer._normalizArgument(v, ctx);
+        tx.moveCall({
+            target: `${package_}::${module_}::${function_}`,
+            typeArguments: typeArguments,
+            arguments: arguments_
+        })
 
-        const tag = vs[0];
-        const value = vs[1];
-        if (tag === "address" || tag === "string") {    
-            return value.toString();
-        }
-        else if (tag === "u8" || tag === "u16" || tag === "u32") {
-            return Number(value);
-        }
-        else if (tag === "u64" || tag === "u128") {
-            return value.toString();
-        }
-        throw Error(`[SuiSerializer] Json serialize error on argument: ${v}`)
+        return tx;
     }
 }

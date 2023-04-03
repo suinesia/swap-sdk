@@ -1,4 +1,4 @@
-import { CoinType, NetworkType } from "./common";
+import { MoveType } from "./move-type";
 
 export class BigIntConstants {
     static ZERO = BigInt(0);
@@ -30,26 +30,13 @@ export class NumberLimit {
     static U64_MAX = BigInt("18446744073709551615");
 }
 
-export class SuiConstants {
-    static SUI_COIN_NAME = "0x2::sui::SUI";
-    static SUI_COIN_TYPE = {
-        network: "sui" as NetworkType,
-        name: SuiConstants.SUI_COIN_NAME
-    } as CoinType;
-}
-
-export class AptosConstants {
-    static APTOS_COIN_NAME = "0x1::aptos_coin::AptosCoin";
-    static APTOS_COIN_TYPE = {
-        network: "aptos" as NetworkType,
-        name: AptosConstants.APTOS_COIN_NAME
-    } as CoinType;
-}
-
 export enum ChainNames {
     SUI_DEVNET = 'sui:devnet',
     SUI_TESTNET = 'sui:testnet',
-    APTOS_DEVNET = 'aptos:devnet',
-    APTOS_TESTNET = 'aptos:testnet',
-    APTOS_MAINNET = 'aptos:mainnet'
+    SUI_MAINNET = 'sui:mainnet'
+}
+
+export class SuiConstants {    
+    static SUI_COIN_NAME = "0x2::sui::SUI";
+    static SUI_COIN_TYPE = new MoveType({package: "0x2", module: "sui", field: "SUI"});
 }

@@ -678,12 +678,16 @@ export class SuiswapClient extends Client {
             return null;
         }
 
-        let coin = {
-            type: MoveType.fromString(type_.replace(/^0x2::coin::Coin<(.+)>$/, "$1")),
-            addr: f.id.id as AddressType,
-            balance: BigInt(f.balance)
-        } as CoinInfo;
-        return coin;
+        try {
+            const coin = {
+                type: MoveType.fromString(type_.trim().replace(/^0x2::coin::Coin<(.+)>$/, "$1")),
+                addr: f.id.id as AddressType,
+                balance: BigInt(f.balance)
+            } as CoinInfo;
+            return coin;                
+        } catch {
+            return null;
+        }
     }
 
     mapMoveCallTransactionToTransactionBlock = (tr: SuiswapMoveCallTransaction) => {

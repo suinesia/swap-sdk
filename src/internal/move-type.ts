@@ -10,12 +10,14 @@ export class MoveType {
     }
 
     static fromString = (s: string) => {
-        const sp = s.split("::");
-        if (sp.length !== 3) {
-            return null;
-        }
+        const regex = /^([^:]+)::([^:]+)::((?:[^:]|::)+)$/;
+        const match = s.trim().match(regex);
 
-        return new MoveType({ package: nid(sp[0]), module: sp[1], field: sp[2] });
+        if (match) {
+          return new MoveType({ package: match[1], module: match[2], field: match[3] });
+        }
+        
+        return null;
     }
 
     constructor(p: { package: string, module: string, field: string}) {
@@ -29,6 +31,6 @@ export class MoveType {
     }
 
     uuid = () => {
-        return `CoinType[${this.str()}]`;
+        return `MoveType[${this.str()}]`;
     }
 }

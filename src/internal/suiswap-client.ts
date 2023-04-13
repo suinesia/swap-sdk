@@ -3,7 +3,7 @@ import {
     Connection, getObjectFields,
     normalizeSuiObjectId as nid, normalizeSuiAddress as naddr,
     getObjectId, getMoveObjectType, SuiObjectDataFilter,
-    PaginatedObjectsResponse, CheckpointedObjectId, SuiObjectResponse, SuiObjectDataOptions,
+    PaginatedObjectsResponse, SuiObjectResponse, SuiObjectDataOptions,
     getObjectType, PaginatedCoins, PaginatedEvents, TransactionBlock, CoinStruct, Inputs
 } from '@mysten/sui.js';
 import { DynamicFieldPage, DynamicFieldInfo } from '@mysten/sui.js/dist/types/dynamic_fields';
@@ -128,7 +128,7 @@ export class SuiswapClient extends Client {
     getOwnedObjects = async (accountAddr: AddressType, extra?: { filter?: SuiObjectDataFilter, options?: SuiObjectDataOptions }) => {
         const results: PaginatedObjectsResponse[] = [];
 
-        let cursor: CheckpointedObjectId | undefined = undefined;
+        let cursor: PaginatedObjectsResponse['nextCursor'] | undefined = undefined;
         while (true) {
 
             const r: PaginatedObjectsResponse = await this.provider.getOwnedObjects({
@@ -371,7 +371,7 @@ export class SuiswapClient extends Client {
         const depositTxs: CommonTransaction[] = [];
         const withdrawTxs: CommonTransaction[] = [];
 
-        let cursor: string | null = null;
+        let cursor: PaginatedEvents['nextCursor'] = null;
         while (swapTxs.length + depositTxs.length + withdrawTxs.length < limit) {
             const ev: PaginatedEvents = await this.provider.queryEvents({ query: { Sender: accountAddr }, cursor: cursor, limit: 200, order: 'descending' });
             const events = ev.data;
@@ -472,7 +472,7 @@ export class SuiswapClient extends Client {
             if (ev.hasNextPage === false || events.length === 0 || ev.nextCursor === null) {
                 break;
             }
-            cursor = ev.nextCursor?.txDigest;
+            cursor = ev.nextCursor;
         }
 
         return [...swapTxs, ...depositTxs, ...withdrawTxs].sort((a, b) => b.timestamp - a.timestamp);
